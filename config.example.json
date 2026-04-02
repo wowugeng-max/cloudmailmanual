@@ -1,0 +1,7 @@
+{
+  "cloud_mail_api_base": "https://api.1314ai.online",
+  "cloud_mail_admin_email": "admin@example.com",
+  "cloud_mail_admin_password": "your_admin_password",
+  "cloud_mail_role_name": "",
+  "proxy": ""
+}
