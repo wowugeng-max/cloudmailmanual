@@ -282,10 +282,15 @@ class CloudMailClient:
         self._used_local_parts.add(fallback)
         return fallback[:64]
 
-    def create_temp_email(self) -> Tuple[str, str, Optional[str]]:
-        domain = self.admin_email.split("@")[-1] if "@" in self.admin_email else ""
+    def create_temp_email(self, domain_suffix: str = "") -> Tuple[str, str, Optional[str]]:
+        default_domain = self.admin_email.split("@")[-1] if "@" in self.admin_email else ""
+        domain = str(domain_suffix or "").strip().lower().strip(".") or default_domain
         if not domain:
             raise Exception("管理员邮箱格式不正确")
+        if "." not in domain:
+            raise Exception("邮箱后缀格式不正确，例如 mailyplus.com")
+        if not all(ch.isalnum() or ch in {"-", "."} for ch in domain):
+            raise Exception("邮箱后缀仅支持字母、数字、- 和 .")
 
         local = self._next_unique_local_part()
         email = f"{local}@{domain}"

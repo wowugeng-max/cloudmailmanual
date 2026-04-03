@@ -3,5 +3,10 @@
   "cloud_mail_admin_email": "admin@example.com",
   "cloud_mail_admin_password": "your_admin_password",
   "cloud_mail_role_name": "",
-  "proxy": ""
+  "proxy": "",
+  "domain_suffix_options": [
+    "example.com",
+    "mx.example.com"
+  ],
+  "default_domain_suffix": "mx.example.com"
 }

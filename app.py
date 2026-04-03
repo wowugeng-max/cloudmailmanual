@@ -8,6 +8,7 @@ import secrets
 import sqlite3
 import string
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 from flask import Flask, jsonify, render_template_string, request, send_file
@@ -18,6 +19,7 @@ app = Flask(__name__)
 
 DB_PATH = "cloudmailmanual.db"
 DEFAULT_MAX_GENERATE = 50
+CONFIG_PATH = Path(__file__).parent / "config.json"
 
 
 def get_max_generate_limit() -> int:
@@ -57,6 +59,46 @@ def set_max_generate_limit(value: int) -> None:
             (str(value),),
         )
         conn.commit()
+
+
+def get_domain_suffix_settings() -> Dict[str, object]:
+    default_options: List[str] = []
+    default_suffix = ""
+
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+
+    admin_email = str(cfg.get("cloud_mail_admin_email", "") or "").strip().lower()
+    admin_domain = admin_email.split("@")[-1] if "@" in admin_email else ""
+
+    options_raw = cfg.get("domain_suffix_options", [])
+    options: List[str] = []
+    if isinstance(options_raw, list):
+        for x in options_raw:
+            s = str(x or "").strip().lower().strip(".")
+            if s and "." in s and s not in options:
+                options.append(s)
+
+    cfg_default = str(cfg.get("default_domain_suffix", "") or "").strip().lower().strip(".")
+    if cfg_default and "." in cfg_default:
+        default_suffix = cfg_default
+
+    if admin_domain and admin_domain not in options:
+        options.insert(0, admin_domain)
+
+    if not options and admin_domain:
+        options = [admin_domain]
+
+    if not default_suffix:
+        default_suffix = options[0] if options else ""
+
+    return {
+        "options": options,
+        "default": default_suffix,
+    }
 
 
 def get_accounts_history(page: int, page_size: int) -> Dict[str, object]:
@@ -254,6 +296,59 @@ def save_accounts(rows: List[Dict[str, str | int]]) -> None:
         conn.commit()
 
 
+def save_accounts_with_meta(rows: List[Dict[str, object]]) -> Tuple[int, int]:
+    imported = 0
+    skipped = 0
+
+    def _to_int(v: object, default: int = 0) -> int:
+        try:
+            return int(v)  # type: ignore[arg-type]
+        except Exception:
+            return default
+
+    def _norm_time(v: object) -> str | None:
+        s = str(v or "").strip()
+        return s or None
+
+    with sqlite3.connect(DB_PATH) as conn:
+        for r in rows:
+            email = str(r.get("email", "") or "").strip()
+            if not email or "@" not in email:
+                skipped += 1
+                continue
+
+            exists = conn.execute(
+                "SELECT 1 FROM accounts WHERE email=? LIMIT 1",
+                (email,),
+            ).fetchone()
+            if exists:
+                skipped += 1
+                continue
+
+            password = str(r.get("password", "") or "").strip()
+            app_password = str(r.get("app_password", "") or "").strip()
+            name = str(r.get("name", "") or "").strip() or "Unknown"
+            age = _to_int(r.get("age", 0), 0)
+            birthday = str(r.get("birthday", "") or "").strip() or "1970-01-01"
+            created_at = _norm_time(r.get("created_at")) or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            used = 1 if str(r.get("used", "0")).strip() in {"1", "true", "True", "yes", "YES", "已使用", "正在使用"} else 0
+            used_at = _norm_time(r.get("used_at"))
+            platforms = str(r.get("platforms", "") or "").strip()
+
+            conn.execute(
+                """
+                INSERT INTO accounts (email, password, app_password, name, age, birthday, created_at, used, used_at, platforms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (email, password, app_password, name, age, birthday, created_at, used, used_at, platforms),
+            )
+            imported += 1
+
+        conn.commit()
+
+    return imported, skipped
+
+
 def save_verification_query(email: str, detail: Dict[str, str]) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(DB_PATH) as conn:
@@ -363,11 +458,11 @@ def generate_app_password(length: int = 12) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 
-def batch_register(count: int) -> List[Dict[str, str | int]]:
+def batch_register(count: int, domain_suffix: str = "") -> List[Dict[str, str | int]]:
     client = CloudMailClient()
     results: List[Dict[str, str | int]] = []
     for _ in range(count):
-        email, password, _ = client.create_temp_email()
+        email, password, _ = client.create_temp_email(domain_suffix=domain_suffix)
         profile = generate_profile()
         results.append(
             {
@@ -380,6 +475,186 @@ def batch_register(count: int) -> List[Dict[str, str | int]]:
             }
         )
     return results
+
+
+def _build_domain_body_candidates(industry: str = "general") -> Tuple[List[str], List[str], List[str], List[str], List[str]]:
+    base_prefixes = [
+        "smart", "next", "prime", "urban", "cloud", "nova", "rapid", "green", "bright", "alpha",
+        "blue", "gold", "meta", "micro", "auto", "vital", "global", "fresh", "quick", "stellar",
+    ]
+    base_cores = [
+        "mail", "tech", "data", "labs", "works", "flow", "logic", "hub", "zone", "link",
+        "point", "base", "stack", "forge", "nova", "net", "signal", "boost", "pulse", "craft",
+    ]
+    base_suffixes = [
+        "pro", "online", "group", "digital", "center", "studio", "systems", "ai", "world", "space",
+        "direct", "solutions", "network", "plus", "core", "team", "service", "media", "hq", "one",
+    ]
+
+    industry_map = {
+        "tech": {
+            "prefixes": ["cloud", "byte", "quant", "neuro", "cyber", "vector", "core", "data"],
+            "cores": ["stack", "compute", "signal", "matrix", "kernel", "logic", "node", "engine"],
+            "suffixes": ["labs", "tech", "systems", "ai", "works", "dev", "ops", "soft"],
+        },
+        "ecommerce": {
+            "prefixes": ["shop", "deal", "cart", "easy", "smart", "quick", "buy", "best"],
+            "cores": ["market", "store", "mall", "sale", "goods", "price", "order", "retail"],
+            "suffixes": ["hub", "online", "plus", "direct", "zone", "center", "mart", "world"],
+        },
+        "media": {
+            "prefixes": ["news", "story", "daily", "fresh", "trend", "buzz", "topic", "live"],
+            "cores": ["media", "press", "stream", "voice", "view", "times", "post", "focus"],
+            "suffixes": ["now", "network", "studio", "channel", "world", "hub", "today", "space"],
+        },
+        "tools": {
+            "prefixes": ["tool", "build", "maker", "fix", "fast", "pro", "task", "util"],
+            "cores": ["kit", "works", "suite", "helper", "craft", "forge", "desk", "lab"],
+            "suffixes": ["pro", "plus", "center", "base", "flow", "hub", "one", "team"],
+        },
+        "mail": {
+            "prefixes": ["mail", "inbox", "post", "prime", "secure", "swift", "verify", "token"],
+            "cores": ["mail", "inbox", "mx", "code", "verify", "pass", "auth", "message"],
+            "suffixes": ["mail", "box", "post", "hub", "center", "works", "service", "direct"],
+        },
+    }
+
+    picked = industry_map.get(industry, None)
+    if picked:
+        prefixes = base_prefixes + picked["prefixes"]
+        cores = base_cores + picked["cores"]
+        suffixes = base_suffixes + picked["suffixes"]
+    else:
+        prefixes = base_prefixes
+        cores = base_cores
+        suffixes = base_suffixes
+
+    short_parts = [
+        "go", "my", "up", "on", "get", "try", "top", "fast", "new", "best",
+    ]
+    vowels = ["a", "e", "i", "o", "u"]
+    return prefixes, cores, suffixes, short_parts, vowels
+
+
+def generate_domain_bodies(
+    count: int,
+    industry: str = "general",
+    avoid_digits: bool = False,
+    require_digits: bool = False,
+    allow_hyphen: bool = True,
+) -> List[str]:
+    prefixes, cores, suffixes, short_parts, vowels = _build_domain_body_candidates(industry)
+
+    # 为了提升 .com 可注册概率：加入“好记但不常见”的可读伪词和短尾巴
+    brand_roots = [
+        "nexa", "verio", "pulza", "maily", "inbix", "zenqo", "orvix", "qinor", "levra", "noviq",
+        "virel", "orbix", "mailo", "trivo", "kivra", "velto", "dovra", "zynex", "ravio", "lumix",
+    ]
+    brand_tails = ["hq", "lab", "base", "core", "zone", "hub", "works", "center", "plus", "one"]
+
+    def rand_digits() -> str:
+        if avoid_digits:
+            return ""
+        if require_digits:
+            return str(random.randint(2, 9999))
+        if random.random() < 0.72:
+            return ""
+        return str(random.randint(2, 9999))
+
+    def sanitize(name: str) -> str:
+        s = "".join(ch for ch in name.lower() if ch.isalnum() or ch == "-")
+        if not allow_hyphen:
+            s = s.replace("-", "")
+        s = s.strip("-")
+        while "--" in s:
+            s = s.replace("--", "-")
+        if len(s) < 4:
+            s += random.choice(cores)
+        return s[:30]
+
+    generated: List[str] = []
+    seen = set()
+
+    max_round = max(800, count * 60)
+    for _ in range(max_round):
+        style = random.randint(1, 10)
+        if style == 1:
+            body = f"{random.choice(prefixes)}{random.choice(cores)}{rand_digits()}"
+        elif style == 2:
+            body = f"{random.choice(cores)}{random.choice(suffixes)}{rand_digits()}"
+        elif style == 3:
+            body = f"{random.choice(prefixes)}-{random.choice(cores)}{rand_digits()}" if allow_hyphen else f"{random.choice(prefixes)}{random.choice(cores)}{rand_digits()}"
+        elif style == 4:
+            body = f"{random.choice(short_parts)}{random.choice(cores)}{rand_digits()}"
+        elif style == 5:
+            body = f"{random.choice(prefixes)}{random.choice(vowels)}{random.choice(cores)}{rand_digits() if require_digits else ''}"
+        elif style == 6:
+            body = f"{random.choice(cores)}-{random.choice(suffixes)}{rand_digits()}" if allow_hyphen else f"{random.choice(cores)}{random.choice(suffixes)}{rand_digits()}"
+        elif style == 7:
+            body = f"{random.choice(prefixes)}{random.choice(cores)}{random.choice(suffixes)}{rand_digits() if require_digits else ''}"
+        elif style == 8:
+            body = f"{random.choice(brand_roots)}{random.choice(cores)}{random.choice(brand_tails)}"
+        elif style == 9:
+            body = f"{random.choice(brand_roots)}{random.choice(brand_tails)}{rand_digits() if not avoid_digits else ''}"
+        else:
+            # 邮件业务风格下提高“可记忆 + 非高占用裸词”比例
+            if industry == "mail":
+                mail_cores = ["mail", "inbox", "mx", "verify", "code", "auth"]
+                body = f"{random.choice(brand_roots)}{random.choice(mail_cores)}{random.choice(brand_tails)}"
+            else:
+                body = f"{random.choice(brand_roots)}{random.choice(cores)}{random.choice(brand_tails)}"
+
+        body = sanitize(body)
+        if not body:
+            continue
+        if require_digits and not any(ch.isdigit() for ch in body):
+            continue
+        if avoid_digits and any(ch.isdigit() for ch in body):
+            continue
+
+        if body not in seen:
+            seen.add(body)
+            generated.append(body)
+            if len(generated) >= count:
+                break
+
+    return generated
+
+
+def generate_third_level_subdomains(
+    domain_bodies: List[str],
+    count: int,
+    industry: str = "general",
+    avoid_digits: bool = False,
+) -> List[str]:
+    lead_parts_map = {
+        "general": ["app", "api", "mail", "auth", "cdn", "img", "m", "go", "id", "user"],
+        "tech": ["api", "dev", "edge", "node", "git", "docs", "app", "auth", "ops", "cloud"],
+        "ecommerce": ["shop", "pay", "order", "cart", "deal", "promo", "img", "m", "user", "app"],
+        "media": ["news", "live", "video", "stream", "post", "topic", "img", "cdn", "m", "app"],
+        "tools": ["tool", "desk", "work", "task", "kit", "api", "app", "sync", "docs", "go"],
+        "mail": ["mail", "mx", "smtp", "inbox", "verify", "code", "auth", "token", "secure", "post"],
+    }
+    mid_parts = ["svc", "core", "hub", "data", "edge", "sys", "cloud", "web", "net", "center"]
+
+    first_pool = lead_parts_map.get(industry, lead_parts_map["general"])
+
+    def maybe_num(token: str) -> str:
+        if avoid_digits:
+            return token
+        if random.random() < 0.25:
+            return f"{token}{random.randint(1, 99)}"
+        return token
+
+    result: List[str] = []
+    for body in domain_bodies[: max(0, count)]:
+        a = maybe_num(random.choice(first_pool))
+        b = maybe_num(random.choice(mid_parts))
+        # 按你的要求：基于当前主体，且不带真实域名后缀（如 .com）
+        sub = f"{a}.{b}.{body}"
+        result.append(sub)
+
+    return result
 
 
 HTML = """
@@ -425,6 +700,7 @@ HTML = """
     .status.ok { color:var(--ok); }
     .status.err { color:var(--danger); }
     table { width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }
+    #historyTable tr.in-use-row td { background: rgba(25, 195, 125, 0.14); }
     th, td { border-bottom:1px solid rgba(255,255,255,.10); text-align:left; padding:9px 7px; }
     th { color:#cdd6ff; font-weight:700; position:sticky; top:0; background:#1a2347; }
     .tools { margin-top:10px; }
@@ -461,6 +737,7 @@ HTML = """
       <button class="tab-btn" id="tabBtn-query-history" onclick="switchTab('query-history')">查询邮箱验证码和账号历史</button>
       <button class="tab-btn" id="tabBtn-query-log" onclick="switchTab('query-log')">验证码查询历史</button>
       <button class="tab-btn" id="tabBtn-query-only" onclick="switchTab('query-only')">查询邮箱验证码</button>
+      <button class="tab-btn" id="tabBtn-domain-body" onclick="switchTab('domain-body')">生成域名主体</button>
     </div>
 
     <div class="grid">
@@ -471,6 +748,8 @@ HTML = """
       <div class="row">
         <label for="count">数量：</label>
         <input id="count" type="number" min="1" max="200" value="5" />
+        <label for="registerDomainSuffix">邮箱后缀：</label>
+        <select id="registerDomainSuffix" style="width:260px;"></select>
         <button id="startBtn" onclick="startRegister()">开始注册</button>
         <button id="downloadBtn" class="btn-secondary" onclick="downloadCsv()" disabled>下载 CSV</button>
       </div>
@@ -535,6 +814,9 @@ HTML = """
         <label for="historyPageSize">每页：</label>
         <input id="historyPageSize" type="number" min="5" max="200" value="20" />
         <button class="btn-secondary" onclick="loadHistory(1)">刷新</button>
+        <button class="btn-secondary" onclick="exportAccountsHistoryCsv()">导出账号历史 CSV</button>
+        <button class="btn-secondary" onclick="triggerImportAccountsCsv()">导入账号历史 CSV</button>
+        <input id="importAccountsFile" type="file" accept=".csv,text/csv" style="display:none;" onchange="importAccountsCsvChanged(event)" />
       </div>
 
       <div class="row" style="margin-top:10px;">
@@ -644,6 +926,58 @@ HTML = """
         </div>
       </div>
     </div>
+
+    <div class="tab-pane" id="tab-domain-body">
+      <div class="card">
+        <h2>生成真实风格的域名主体</h2>
+        <p>批量生成用于注册时更自然的域名前缀（不含后缀，如 .com）。点击任意单元格可复制。</p>
+        <div class="row">
+          <label for="domainBodyCount">数量：</label>
+          <input id="domainBodyCount" type="number" min="1" max="500" value="30" />
+          <label for="domainBodyIndustry">行业风格：</label>
+          <select id="domainBodyIndustry" style="width:180px;">
+            <option value="general">通用</option>
+            <option value="tech">科技</option>
+            <option value="ecommerce">电商</option>
+            <option value="media">媒体</option>
+            <option value="tools">工具</option>
+            <option value="mail">邮件业务</option>
+          </select>
+          <button id="domainBodyBtn" onclick="generateDomainBodies()">生成</button>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyAvoidDigits" type="checkbox" style="width:auto;" />
+            避免数字
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyRequireDigits" type="checkbox" style="width:auto;" />
+            必含数字
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyAllowHyphen" type="checkbox" style="width:auto;" checked />
+            允许连字符 (-)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyRecommendSubdomain" type="checkbox" style="width:auto;" checked />
+            生成三级子域推荐
+          </label>
+        </div>
+        <div id="domainBodyStatus" class="status"></div>
+        <div class="tools">
+          <table id="domainBodyTable" class="copy-table" style="display:none; margin-top:10px;">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>域名主体</th>
+                <th>三级子域推荐</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -653,6 +987,7 @@ let historyPage = 1;
 let historyTotalPages = 1;
 let queryHistoryPage = 1;
 let queryHistoryTotalPages = 1;
+let currentInUseEmail = '';
 
 async function loadMaxLimit() {
   try {
@@ -662,6 +997,26 @@ async function loadMaxLimit() {
       document.getElementById('maxGenerateLimit').value = data.max_generate_limit;
       document.getElementById('count').max = data.max_generate_limit;
     }
+  } catch (_) {}
+}
+
+async function loadDomainSuffixOptions() {
+  const select = document.getElementById('registerDomainSuffix');
+  if (!select) return;
+
+  try {
+    const res = await fetch('/api/settings/domain-suffix-options');
+    const data = await res.json();
+    if (!res.ok || !data.ok) return;
+
+    select.innerHTML = '';
+    (data.options || []).forEach((opt) => {
+      const option = document.createElement('option');
+      option.value = opt;
+      option.textContent = opt;
+      if (opt === data.default) option.selected = true;
+      select.appendChild(option);
+    });
   } catch (_) {}
 }
 
@@ -695,6 +1050,7 @@ async function saveMaxLimit() {
 
 async function startRegister() {
   const count = Number(document.getElementById('count').value || 0);
+  const domainSuffix = String(document.getElementById('registerDomainSuffix').value || '').trim();
   const status = document.getElementById('status');
   const btn = document.getElementById('startBtn');
   const downloadBtn = document.getElementById('downloadBtn');
@@ -702,6 +1058,12 @@ async function startRegister() {
   if (!count || count < 1) {
     status.className = 'status err';
     status.textContent = '请输入大于 0 的数量';
+    return;
+  }
+
+  if (domainSuffix && !domainSuffix.includes('.')) {
+    status.className = 'status err';
+    status.textContent = '邮箱后缀格式不正确，例如 mailyplus.com';
     return;
   }
 
@@ -714,7 +1076,7 @@ async function startRegister() {
     const res = await fetch('/api/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count })
+      body: JSON.stringify({ count, domain_suffix: domainSuffix })
     });
     const data = await res.json();
 
@@ -819,6 +1181,81 @@ async function queryCodeOnly() {
     document.getElementById('queryOnlyResultTable'),
     false,
   );
+}
+
+async function generateDomainBodies() {
+  const count = Number(document.getElementById('domainBodyCount').value || 0);
+  const industry = String(document.getElementById('domainBodyIndustry').value || 'general');
+  const avoidDigits = !!document.getElementById('domainBodyAvoidDigits').checked;
+  const requireDigits = !!document.getElementById('domainBodyRequireDigits').checked;
+  const allowHyphen = !!document.getElementById('domainBodyAllowHyphen').checked;
+  const recommendSubdomain = !!document.getElementById('domainBodyRecommendSubdomain').checked;
+
+  const status = document.getElementById('domainBodyStatus');
+  const btn = document.getElementById('domainBodyBtn');
+  const table = document.getElementById('domainBodyTable');
+  const tbody = table.querySelector('tbody');
+
+  if (!count || count < 1 || count > 500) {
+    status.className = 'status err';
+    status.textContent = '数量必须在 1-500';
+    return;
+  }
+
+  if (avoidDigits && requireDigits) {
+    status.className = 'status err';
+    status.textContent = '“避免数字”和“必含数字”不能同时开启';
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在生成...';
+  table.style.display = 'none';
+  tbody.innerHTML = '';
+
+  try {
+    const res = await fetch('/api/domain-bodies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        count,
+        industry,
+        avoid_digits: avoidDigits,
+        require_digits: requireDigits,
+        allow_hyphen: allowHyphen,
+        recommend_subdomain: recommendSubdomain,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '生成失败');
+    }
+
+    const items = data.items || [];
+    const subdomains = data.subdomains || [];
+
+    items.forEach((name, idx) => {
+      const sub = subdomains[idx] || '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td data-copy="${idx + 1}">${idx + 1}</td>
+        <td data-copy="${name || ''}">${name || ''}</td>
+        <td data-copy="${sub}">${sub}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    table.style.display = items.length ? 'table' : 'none';
+    bindCopyHandlers();
+    status.className = 'status ok';
+    status.textContent = `完成：已生成 ${items.length} 条${recommendSubdomain ? '，并附带三级子域推荐' : ''}`;
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function renderTable(rows) {
@@ -938,6 +1375,9 @@ async function loadHistory(page) {
     tbody.innerHTML = '';
     (data.items || []).forEach((r) => {
       const tr = document.createElement('tr');
+      const isInUse = !!r.used || (currentInUseEmail && String(r.email || '').toLowerCase() === currentInUseEmail.toLowerCase());
+      if (isInUse) tr.classList.add('in-use-row');
+
       tr.innerHTML = `
         <td data-copy="${r.id || ''}">${r.id || ''}</td>
         <td data-copy="${r.email || ''}">${r.email || ''}</td>
@@ -946,13 +1386,13 @@ async function loadHistory(page) {
         <td data-copy="${r.name || ''}">${r.name || ''}</td>
         <td data-copy="${r.age || ''}">${r.age || ''}</td>
         <td data-copy="${r.birthday || ''}">${r.birthday || ''}</td>
-        <td data-copy="${r.used ? '已使用' : '未使用'}">${r.used ? '已使用' : '未使用'}</td>
+        <td data-copy="${isInUse ? '正在使用' : '未使用'}">${isInUse ? '正在使用' : '未使用'}</td>
         <td data-copy="${r.platforms || ''}">${r.platforms || ''}</td>
         <td data-copy="${r.used_at || ''}">${r.used_at || ''}</td>
         <td data-copy="${r.created_at || ''}">${r.created_at || ''}</td>
         <td>
-          <button class="${r.used ? 'btn-secondary' : 'btn-warning'}" onclick="setUsed('${(r.email || '').replace(/'/g, "\\'")}', ${r.used ? 'false' : 'true'})">
-            ${r.used ? '改为未使用' : '标记已使用'}
+          <button class="${isInUse ? 'btn-secondary' : 'btn-warning'}" onclick="setUsed('${(r.email || '').replace(/'/g, "\\'")}', ${isInUse ? 'false' : 'true'})">
+            ${isInUse ? '改为未使用' : '标记正在使用'}
           </button>
         </td>
       `;
@@ -987,7 +1427,14 @@ async function setUsed(email, used) {
     if (!res.ok || !data.ok) {
       throw new Error(data.error || '状态更新失败');
     }
-    showCopyToast(`${email} 已更新为${used ? '已使用' : '未使用'}`);
+
+    if (used) {
+      currentInUseEmail = email;
+    } else if (currentInUseEmail && currentInUseEmail.toLowerCase() === String(email).toLowerCase()) {
+      currentInUseEmail = '';
+    }
+
+    showCopyToast(`${email} 已更新为${used ? '正在使用' : '未使用'}`);
     loadHistory(historyPage);
   } catch (e) {
     alert(`状态更新失败：${e.message || e}`);
@@ -1195,12 +1642,54 @@ function downloadCsv() {
   window.location.href = `/api/export.csv?rows=${qs}`;
 }
 
+function exportAccountsHistoryCsv() {
+  window.location.href = '/api/history/accounts/export.csv';
+}
+
+function triggerImportAccountsCsv() {
+  const input = document.getElementById('importAccountsFile');
+  if (input) input.click();
+}
+
+async function importAccountsCsvChanged(event) {
+  const status = document.getElementById('historyStatus');
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  status.className = 'status';
+  status.textContent = '正在导入账号历史...';
+
+  try {
+    const res = await fetch('/api/history/accounts/import.csv', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '导入失败');
+    }
+
+    status.className = 'status ok';
+    status.textContent = `导入完成：成功 ${data.imported} 条，跳过 ${data.skipped} 条`;
+    loadHistory(1);
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `导入失败：${e.message || e}`;
+  } finally {
+    event.target.value = '';
+  }
+}
+
 function switchTab(tabName) {
   const map = {
     register: 'tab-register',
     'query-history': 'tab-query-history',
     'query-log': 'tab-query-log',
     'query-only': 'tab-query-only',
+    'domain-body': 'tab-domain-body',
   };
 
   document.querySelectorAll('.tab-pane').forEach((el) => el.classList.remove('active'));
@@ -1215,6 +1704,7 @@ function switchTab(tabName) {
 
 window.addEventListener('load', () => {
   loadMaxLimit();
+  loadDomainSuffixOptions();
   onDeleteModeChange();
   loadHistory(1);
   loadQueryHistory(1);
@@ -1236,14 +1726,25 @@ def index():
 def api_register():
     payload = request.get_json(silent=True) or {}
     count = int(payload.get("count", 0) or 0)
+    domain_suffix = str(payload.get("domain_suffix", "") or "").strip().lower().strip(".")
     max_limit = get_max_generate_limit()
     if count < 1 or count > max_limit:
         return jsonify({"ok": False, "error": f"count 必须在 1-{max_limit}"}), 400
+    if domain_suffix:
+        if "." not in domain_suffix:
+            return jsonify({"ok": False, "error": "domain_suffix 格式不正确，例如 mailyplus.com"}), 400
+        if not all(ch.isalnum() or ch in {"-", "."} for ch in domain_suffix):
+            return jsonify({"ok": False, "error": "domain_suffix 仅支持字母、数字、- 和 ."}), 400
 
     try:
-        rows = batch_register(count)
+        rows = batch_register(count, domain_suffix=domain_suffix)
         save_accounts(rows)
-        return jsonify({"ok": True, "data": rows, "max_generate_limit": max_limit})
+        return jsonify({
+            "ok": True,
+            "data": rows,
+            "max_generate_limit": max_limit,
+            "domain_suffix": domain_suffix,
+        })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -1251,6 +1752,12 @@ def api_register():
 @app.get("/api/settings/max-generate-limit")
 def api_get_max_generate_limit():
     return jsonify({"ok": True, "max_generate_limit": get_max_generate_limit()})
+
+
+@app.get("/api/settings/domain-suffix-options")
+def api_get_domain_suffix_options():
+    settings = get_domain_suffix_settings()
+    return jsonify({"ok": True, "options": settings["options"], "default": settings["default"]})
 
 
 @app.post("/api/settings/max-generate-limit")
@@ -1414,6 +1921,52 @@ def api_set_used():
     return jsonify({"ok": True, "email": email, "used": used, "platform": platform})
 
 
+@app.post("/api/domain-bodies")
+def api_domain_bodies():
+    payload = request.get_json(silent=True) or {}
+    count = int(payload.get("count", 0) or 0)
+    industry = str(payload.get("industry", "general") or "general").strip().lower()
+    avoid_digits = bool(payload.get("avoid_digits", False))
+    require_digits = bool(payload.get("require_digits", False))
+    allow_hyphen = bool(payload.get("allow_hyphen", True))
+    recommend_subdomain = bool(payload.get("recommend_subdomain", True))
+
+    if count < 1 or count > 500:
+        return jsonify({"ok": False, "error": "count 必须在 1-500"}), 400
+    if industry not in {"general", "tech", "ecommerce", "media", "tools", "mail"}:
+        return jsonify({"ok": False, "error": "industry 必须是 general/tech/ecommerce/media/tools/mail"}), 400
+    if avoid_digits and require_digits:
+        return jsonify({"ok": False, "error": "avoid_digits 与 require_digits 不能同时为 true"}), 400
+
+    items = generate_domain_bodies(
+        count=count,
+        industry=industry,
+        avoid_digits=avoid_digits,
+        require_digits=require_digits,
+        allow_hyphen=allow_hyphen,
+    )
+    subdomains = generate_third_level_subdomains(
+        domain_bodies=items,
+        count=len(items),
+        industry=industry,
+        avoid_digits=avoid_digits,
+    ) if recommend_subdomain else []
+
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "subdomains": subdomains,
+        "count": len(items),
+        "options": {
+            "industry": industry,
+            "avoid_digits": avoid_digits,
+            "require_digits": require_digits,
+            "allow_hyphen": allow_hyphen,
+            "recommend_subdomain": recommend_subdomain,
+        },
+    })
+
+
 @app.get("/api/export.csv")
 def api_export_csv():
     rows_raw = request.args.get("rows", "[]")
@@ -1444,6 +1997,66 @@ def api_export_csv():
         as_attachment=True,
         download_name="cloud_mail_accounts.csv",
     )
+
+
+@app.get("/api/history/accounts/export.csv")
+def api_export_accounts_history_csv():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT email, password, app_password, name, age, birthday,
+                   created_at, used, used_at, platforms
+            FROM accounts
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "email", "password", "app_password", "name", "age", "birthday",
+        "created_at", "used", "used_at", "platforms",
+    ])
+    for r in rows:
+        d = dict(r)
+        writer.writerow([
+            d.get("email", ""),
+            d.get("password", ""),
+            d.get("app_password", ""),
+            d.get("name", ""),
+            d.get("age", ""),
+            d.get("birthday", ""),
+            d.get("created_at", ""),
+            d.get("used", 0),
+            d.get("used_at", ""),
+            d.get("platforms", ""),
+        ])
+
+    data = io.BytesIO(buffer.getvalue().encode("utf-8-sig"))
+    return send_file(
+        data,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="cloud_mail_accounts_history.csv",
+    )
+
+
+@app.post("/api/history/accounts/import.csv")
+def api_import_accounts_history_csv():
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"ok": False, "error": "请上传 CSV 文件"}), 400
+
+    try:
+        raw = f.read()
+        text = raw.decode("utf-8-sig", errors="ignore")
+        reader = csv.DictReader(io.StringIO(text))
+        rows = [dict(r) for r in reader if isinstance(r, dict)]
+        imported, skipped = save_accounts_with_meta(rows)
+        return jsonify({"ok": True, "imported": imported, "skipped": skipped})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 init_db()
