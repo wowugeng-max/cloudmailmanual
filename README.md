@@ -37,16 +37,40 @@ Copy-Item config.example.json config.json
 - `cloud_mail_admin_password`: 管理员密码
 - `cloud_mail_role_name`: 可选，创建用户角色名
 - `proxy`: 可选，HTTP 代理
+- `web_port`: Web 启动端口（1-65535，默认 5000）
 
 ## 3. 启动
 
+默认启动（端口优先级：`--port` > `config.json.web_port` > `APP_PORT/PORT` > `5000`）：
+
 ```bash
-python app.py
+python app.py --debug
 ```
+
+命令行临时指定端口（最高优先级）：
+
+```bash
+python app.py --port 8080 --debug
+```
+
+环境变量指定端口（低于 `config.json.web_port` 和 `--port`）：
+
+```bash
+# Linux / macOS
+APP_PORT=8080 python app.py --debug
+
+# Windows PowerShell
+$env:APP_PORT = "8080"
+python app.py --debug
+```
+
+如果使用一键脚本：
+- 默认读取 `config.json.web_port`
+- 也可手动设置 `WEB_PORT` 覆盖（优先级更高）
 
 浏览器访问：
 
-- `http://127.0.0.1:5000`
+- `http://127.0.0.1:<你的端口>`
 
 ---
 

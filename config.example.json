@@ -8,5 +8,6 @@
     "example.com",
     "mx.example.com"
   ],
-  "default_domain_suffix": "mx.example.com"
+  "default_domain_suffix": "mx.example.com",
+  "web_port": 5000
 }
