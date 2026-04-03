@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+.venv-mac/
+
+# Local runtime data
+cloudmailmanual.db
+
+# Local private configuration
+config.json
