@@ -129,23 +129,30 @@ class CloudMailClient:
         if not content:
             return None
 
+        normalized = str(content)
+        normalized = re.sub(r"<head\b[\s\S]*?</head>", " ", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<style\b[\s\S]*?</style>", " ", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<script\b[\s\S]*?</script>", " ", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<!--.*?-->", " ", normalized, flags=re.DOTALL)
+        normalized = re.sub(r"<[^>]+>", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
         # 1) 先匹配 Grok 常见格式：XXX-XXX
-        m = re.search(r"(?<![A-Z0-9-])([A-Z0-9]{3}-[A-Z0-9]{3})(?![A-Z0-9-])", content)
+        m = re.search(r"(?<![A-Z0-9-])([A-Z0-9]{3}-[A-Z0-9]{3})(?![A-Z0-9-])", normalized)
         if m:
             return m.group(1)
 
-        # 2) 再匹配连续 6 位字母数字（如 6PN6XW）
-        m = re.search(r"(?<![A-Z0-9])([A-Z0-9]{6})(?![A-Z0-9])", content)
+        # 2) 再匹配连续 6 位字母数字（如 6PN6XW），优先非纯数字
+        m = re.search(r"(?<![A-Z0-9])([A-Z0-9]{6})(?![A-Z0-9])", normalized)
         if m:
             code = m.group(1)
-            # 纯数字是否允许由调用方决定
             if allow_digits or not code.isdigit():
                 return code
 
-        # 3) 带标签语义
+        # 3) 带标签语义：code/验证码 后面紧跟候选值
         m = re.search(
-            r"(?:verification code|验证码|your code)[:\s]*[<>\s]*([A-Z0-9-]{6,7})\b",
-            content,
+            r"(?:verification code|验证码|your code|code is|code below|enter this code)[^A-Z0-9]{0,20}([A-Z0-9-]{6,8})\b",
+            normalized,
             re.IGNORECASE,
         )
         if m:
@@ -154,10 +161,11 @@ class CloudMailClient:
                 return code
 
         if allow_digits:
-            for code in re.findall(r">\s*(\d{6})\s*<", content):
+            # 4) 纯数字优先从更像正文展示位的地方提取，避免命中颜色值/样式数字
+            for code in re.findall(r"(?:verification code|验证码|your code|code is|code below|enter this code)[^\d]{0,40}(\d{6})", normalized, re.IGNORECASE):
                 if code != "177010":
                     return code
-            for code in re.findall(r"(?<![&#\d])(\d{6})(?![&#\d])", content):
+            for code in re.findall(r"(?<![A-Z0-9])(\d{6})(?![A-Z0-9])", normalized):
                 if code != "177010":
                     return code
 
