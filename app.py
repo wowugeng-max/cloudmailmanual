@@ -13,11 +13,13 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from flask import Flask, jsonify, render_template_string, request, send_file
+from flask import Flask, jsonify, render_template_string, request, send_file, session, redirect, url_for
 
+from auth import init_auth_db, login_required, login_user, logout_user, verify_user, get_current_user, change_password
 from cloud_mail_client import CloudMailClient
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
 
 DB_PATH = "cloudmailmanual.db"
 DEFAULT_MAX_GENERATE = 50
@@ -732,6 +734,10 @@ HTML = """
         <div class="brand">Cloud Mail Console</div>
         <div class="sub">批量创建、验证码查询、历史管理（SQLite 持久化）</div>
       </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="color:#aaa;font-size:13px;" id="currentUser"></span>
+        <a href="/logout" style="color:#f88;text-decoration:none;font-size:13px;border:1px solid #5a3a3a;padding:5px 14px;border-radius:6px;" onmouseover="this.style.background='#3a1a1a'" onmouseout="this.style.background='transparent'">退出登录</a>
+      </div>
     </div>
 
     <div class="tabs">
@@ -740,6 +746,7 @@ HTML = """
       <button class="tab-btn" id="tabBtn-query-log" onclick="switchTab('query-log')">验证码查询历史</button>
       <button class="tab-btn" id="tabBtn-query-only" onclick="switchTab('query-only')">查询邮箱验证码</button>
       <button class="tab-btn" id="tabBtn-domain-body" onclick="switchTab('domain-body')">生成域名主体</button>
+      <button class="tab-btn" id="tabBtn-change-password" onclick="switchTab('change-password')">修改密码</button>
     </div>
 
     <div class="grid">
@@ -978,6 +985,29 @@ HTML = """
             <tbody></tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-change-password">
+      <div class="card">
+        <h2>修改密码</h2>
+        <p>修改当前登录账号的密码。</p>
+        <div class="row">
+          <label for="oldPassword">原密码：</label>
+          <input id="oldPassword" type="password" placeholder="请输入当前密码" style="width:220px;" />
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <label for="newPassword">新密码：</label>
+          <input id="newPassword" type="password" placeholder="至少 6 位" style="width:220px;" />
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <label for="confirmPassword">确认新密码：</label>
+          <input id="confirmPassword" type="password" placeholder="再次输入新密码" style="width:220px;" />
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button id="changePwdBtn" onclick="changePassword()">修改密码</button>
+        </div>
+        <div id="changePwdStatus" class="status"></div>
       </div>
     </div>
     </div>
@@ -1685,6 +1715,49 @@ async function importAccountsCsvChanged(event) {
   }
 }
 
+async function changePassword() {
+  const status = document.getElementById('changePwdStatus');
+  const btn = document.getElementById('changePwdBtn');
+  const oldPassword = document.getElementById('oldPassword').value;
+  const newPassword = document.getElementById('newPassword').value;
+  const confirmPassword = document.getElementById('confirmPassword').value;
+
+  status.className = 'status';
+  status.textContent = '';
+
+  if (!oldPassword) { status.className = 'status err'; status.textContent = '请输入原密码'; return; }
+  if (!newPassword || newPassword.length < 6) { status.className = 'status err'; status.textContent = '新密码至少 6 位'; return; }
+  if (newPassword !== confirmPassword) { status.className = 'status err'; status.textContent = '两次输入的新密码不一致'; return; }
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在修改...';
+
+  try {
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      status.className = 'status ok';
+      status.textContent = '密码修改成功';
+      document.getElementById('oldPassword').value = '';
+      document.getElementById('newPassword').value = '';
+      document.getElementById('confirmPassword').value = '';
+    } else {
+      status.className = 'status err';
+      status.textContent = data.message || '修改失败';
+    }
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `请求失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function switchTab(tabName) {
   const map = {
     register: 'tab-register',
@@ -1692,6 +1765,7 @@ function switchTab(tabName) {
     'query-log': 'tab-query-log',
     'query-only': 'tab-query-only',
     'domain-body': 'tab-domain-body',
+    'change-password': 'tab-change-password',
   };
 
   document.querySelectorAll('.tab-pane').forEach((el) => el.classList.remove('active'));
@@ -1705,6 +1779,7 @@ function switchTab(tabName) {
 }
 
 window.addEventListener('load', () => {
+  fetch('/api/me').then(r=>r.json()).then(d=>{if(d.ok)document.getElementById('currentUser').textContent=d.username;});
   loadMaxLimit();
   loadDomainSuffixOptions();
   onDeleteModeChange();
@@ -1720,11 +1795,13 @@ window.addEventListener('load', () => {
 
 
 @app.get("/")
+@login_required
 def index():
     return render_template_string(HTML)
 
 
 @app.post("/api/register")
+@login_required
 def api_register():
     payload = request.get_json(silent=True) or {}
     count = int(payload.get("count", 0) or 0)
@@ -1752,17 +1829,20 @@ def api_register():
 
 
 @app.get("/api/settings/max-generate-limit")
+@login_required
 def api_get_max_generate_limit():
     return jsonify({"ok": True, "max_generate_limit": get_max_generate_limit()})
 
 
 @app.get("/api/settings/domain-suffix-options")
+@login_required
 def api_get_domain_suffix_options():
     settings = get_domain_suffix_settings()
     return jsonify({"ok": True, "options": settings["options"], "default": settings["default"]})
 
 
 @app.post("/api/settings/max-generate-limit")
+@login_required
 def api_set_max_generate_limit():
     payload = request.get_json(silent=True) or {}
     value = int(payload.get("value", 0) or 0)
@@ -1773,6 +1853,7 @@ def api_set_max_generate_limit():
 
 
 @app.get("/api/history/accounts")
+@login_required
 def api_history_accounts():
     page = int(request.args.get("page", 1) or 1)
     page_size = int(request.args.get("page_size", 20) or 20)
@@ -1788,6 +1869,7 @@ def api_history_accounts():
 
 
 @app.post("/api/history/accounts/bulk-delete")
+@login_required
 def api_history_accounts_bulk_delete():
     payload = request.get_json(silent=True) or {}
     mode = str(payload.get("mode", "")).strip()
@@ -1815,6 +1897,7 @@ def api_history_accounts_bulk_delete():
 
 
 @app.get("/api/history/query-code")
+@login_required
 def api_history_query_code():
     page = int(request.args.get("page", 1) or 1)
     page_size = int(request.args.get("page_size", 20) or 20)
@@ -1831,6 +1914,7 @@ def api_history_query_code():
 
 
 @app.post("/api/history/query-code/delete")
+@login_required
 def api_delete_history_query_code():
     payload = request.get_json(silent=True) or {}
     email = str(payload.get("email", "")).strip()
@@ -1853,6 +1937,7 @@ def api_delete_history_query_code():
 
 
 @app.post("/api/query-code")
+@login_required
 def api_query_code():
     payload = request.get_json(silent=True) or {}
     email = str(payload.get("email", "")).strip()
@@ -1907,6 +1992,7 @@ def api_query_code():
 
 
 @app.post("/api/accounts/set-used")
+@login_required
 def api_set_used():
     payload = request.get_json(silent=True) or {}
     email = str(payload.get("email", "")).strip()
@@ -1924,6 +2010,7 @@ def api_set_used():
 
 
 @app.post("/api/domain-bodies")
+@login_required
 def api_domain_bodies():
     payload = request.get_json(silent=True) or {}
     count = int(payload.get("count", 0) or 0)
@@ -1970,6 +2057,7 @@ def api_domain_bodies():
 
 
 @app.get("/api/export.csv")
+@login_required
 def api_export_csv():
     rows_raw = request.args.get("rows", "[]")
     try:
@@ -2002,6 +2090,7 @@ def api_export_csv():
 
 
 @app.get("/api/history/accounts/export.csv")
+@login_required
 def api_export_accounts_history_csv():
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -2045,6 +2134,7 @@ def api_export_accounts_history_csv():
 
 
 @app.post("/api/history/accounts/import.csv")
+@login_required
 def api_import_accounts_history_csv():
     f = request.files.get("file")
     if not f:
@@ -2104,6 +2194,96 @@ def parse_args() -> argparse.Namespace:
 
 
 init_db()
+init_auth_db()
+
+# ---- 登录验证 ----
+
+LOGIN_PAGE_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloud Mail Console - Login</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0f0f0f; color:#eee; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; justify-content:center; align-items:center; min-height:100vh; }
+  .login-box { background:#1a1a2e; border:1px solid #2a2a4a; border-radius:12px; padding:40px; width:380px; max-width:90vw; }
+  .login-box h1 { text-align:center; margin-bottom:8px; font-size:22px; color:#fff; }
+  .login-box .sub { text-align:center; color:#888; margin-bottom:28px; font-size:13px; }
+  .field { margin-bottom:16px; }
+  .field label { display:block; margin-bottom:6px; color:#aaa; font-size:13px; }
+  .field input { width:100%; padding:10px 12px; background:#0f0f23; border:1px solid #2a2a4a; border-radius:6px; color:#eee; font-size:14px; outline:none; transition:border-color .2s; }
+  .field input:focus { border-color:#4a6cf7; }
+  .btn { width:100%; padding:11px; background:#4a6cf7; border:none; border-radius:6px; color:#fff; font-size:15px; cursor:pointer; transition:background .2s; }
+  .btn:hover { background:#5b7df8; }
+  .error { background:#3a1a1a; border:1px solid #6a2a2a; color:#f88; padding:10px; border-radius:6px; margin-bottom:16px; font-size:13px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="login-box">
+  <h1>Cloud Mail Console</h1>
+  <p class="sub">请输入登录凭据</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="POST">
+    <div class="field">
+      <label for="username">用户名</label>
+      <input id="username" name="username" type="text" required autofocus>
+    </div>
+    <div class="field">
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" required>
+    </div>
+    <button class="btn" type="submit">登录</button>
+  </form>
+</div>
+</body>
+</html>
+"""
+
+
+@app.get("/login")
+def login_page():
+    if get_current_user():
+        return redirect(url_for("index"))
+    error = request.args.get("error", "")
+    return render_template_string(LOGIN_PAGE_HTML, error=error)
+
+
+@app.post("/login")
+def login_handler():
+    username = (request.form.get("username") or "").strip()
+    password = (request.form.get("password") or "").strip()
+    if verify_user(username, password):
+        login_user(username)
+        nxt = request.args.get("next", "")
+        if nxt and nxt.startswith("/") and not nxt.startswith("//"):
+            return redirect(nxt)
+        return redirect(url_for("index"))
+    return redirect(url_for("login_page", error="用户名或密码错误"))
+
+
+@app.get("/logout")
+def logout():
+    logout_user()
+    return redirect(url_for("login_page"))
+
+
+@app.post("/api/change-password")
+@login_required
+def api_change_password():
+    payload = request.get_json(silent=True) or {}
+    username = get_current_user()
+    old_pwd = str(payload.get("old_password", "") or "")
+    new_pwd = str(payload.get("new_password", "") or "")
+    ok, msg = change_password(username, old_pwd, new_pwd)
+    return jsonify({"ok": ok, "message": msg})
+
+
+@app.get("/api/me")
+@login_required
+def api_me():
+    return jsonify({"ok": True, "username": get_current_user()})
+
 
 if __name__ == "__main__":
     args = parse_args()
