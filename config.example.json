@@ -1,13 +1,20 @@
 {
-  "cloud_mail_api_base": "https://api.1314ai.online",
-  "cloud_mail_admin_email": "admin@example.com",
-  "cloud_mail_admin_password": "your_admin_password",
-  "cloud_mail_role_name": "",
-  "proxy": "",
-  "domain_suffix_options": [
-    "example.com",
-    "mx.example.com"
+  "mail_profiles": [
+    {
+      "id": "default",
+      "name": "Default Cloud Mail",
+      "cloud_mail_api_base": "https://api.1314ai.online",
+      "cloud_mail_admin_email": "admin@example.com",
+      "cloud_mail_admin_password": "your_admin_password",
+      "cloud_mail_role_name": "",
+      "proxy": "",
+      "domain_suffix_options": [
+        "example.com",
+        "mx.example.com"
+      ],
+      "default_domain_suffix": "mx.example.com"
+    }
   ],
-  "default_domain_suffix": "mx.example.com",
+  "active_mail_profile_id": "default",
   "web_port": 5000
 }

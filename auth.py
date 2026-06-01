@@ -4,14 +4,12 @@ import functools
 import os
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, Callable
 
 from flask import session, redirect, url_for, flash, request
 from werkzeug.security import generate_password_hash, check_password_hash
 
-DB_PATH = "cloudmailmanual.db"
-CONFIG_PATH = Path(__file__).parent / "config.json"
+from cloudmailmanual_app.config import CONFIG_PATH, DB_PATH
 
 
 def _get_db() -> sqlite3.Connection:

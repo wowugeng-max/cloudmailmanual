@@ -12,6 +12,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from cloudmailmanual_app.repositories.mail_profiles import get_mail_profile_by_id
+
 
 def _load_config() -> Dict[str, Any]:
     cfg_path = Path(__file__).parent / "config.json"
@@ -22,8 +24,8 @@ def _load_config() -> Dict[str, Any]:
 
 
 class CloudMailClient:
-    def __init__(self) -> None:
-        self.conf = _load_config()
+    def __init__(self, profile_id: str = "") -> None:
+        self.conf = get_mail_profile_by_id(profile_id)
         self.base = str(self.conf.get("cloud_mail_api_base", "")).rstrip("/")
         self.admin_email = str(self.conf.get("cloud_mail_admin_email", ""))
         self.admin_password = str(self.conf.get("cloud_mail_admin_password", ""))

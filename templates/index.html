@@ -1,0 +1,1384 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloud Mail 批量注册</title>
+  <style>
+    :root {
+      --bg:#0b1020; --card:#141b34; --text:#e8ecff; --muted:#a8b0d3;
+      --primary:#6b8cff; --ok:#19c37d; --danger:#ff6b6b; --warning:#ffb020;
+    }
+    body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; background:linear-gradient(135deg,#0b1020,#111a3a); color:var(--text); }
+    .wrap { max-width:1200px; margin:32px auto; padding:0 16px 24px; }
+    .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+    .brand { font-size:24px; font-weight:700; letter-spacing:.2px; }
+    .sub { color:var(--muted); font-size:13px; }
+    .grid { display:grid; grid-template-columns:1fr; gap:14px; }
+    .tabs { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+    .tab-btn { background:#23305a; color:#d9e2ff; border:1px solid rgba(255,255,255,.12); }
+    .tab-btn.active { background:var(--primary); color:#fff; }
+    .tab-pane { display:none; }
+    .tab-pane.active { display:block; }
+    .card { background:rgba(20,27,52,.92); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.32); }
+    h1, h2 { margin:0 0 6px; }
+    h1 { font-size:26px; }
+    h2 { font-size:18px; }
+    p { margin:0 0 14px; color:var(--muted); }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    input, select {
+      width:220px; padding:9px 11px; border-radius:9px;
+      border:1px solid rgba(255,255,255,.16); background:#0f1530; color:var(--text);
+    }
+    #count { width:120px; }
+    button { padding:9px 13px; border:0; border-radius:9px; cursor:pointer; color:white; background:var(--primary); font-weight:600; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .btn-secondary { background:#2f3b67; }
+    .btn-danger { background:#a83333; }
+    .btn-warning { background:#855d14; }
+    .status { margin-top:10px; color:var(--muted); }
+    .status.ok { color:var(--ok); }
+    .status.err { color:var(--danger); }
+    table { width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }
+    #historyTable tr.in-use-row td { background: rgba(25, 195, 125, 0.14); }
+    th, td { border-bottom:1px solid rgba(255,255,255,.10); text-align:left; padding:9px 7px; }
+    th { color:#cdd6ff; font-weight:700; position:sticky; top:0; background:#1a2347; }
+    .tools { margin-top:10px; }
+    .section-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    table.copy-table td[data-copy] { cursor: copy; user-select: none; }
+    table.copy-table td[data-copy]:hover { background: rgba(107, 140, 255, 0.16); }
+    #copyToast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: rgba(25, 195, 125, 0.95);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      display: none;
+      z-index: 9999;
+      box-shadow: 0 8px 20px rgba(0,0,0,.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="copyToast"></div>
+    <div class="topbar">
+      <div>
+        <div class="brand">Cloud Mail Console</div>
+        <div class="sub">批量创建、验证码查询、历史管理（SQLite 持久化）</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="color:#aaa;font-size:13px;" id="currentUser"></span>
+        <a href="/logout" style="color:#f88;text-decoration:none;font-size:13px;border:1px solid #5a3a3a;padding:5px 14px;border-radius:6px;" onmouseover="this.style.background='#3a1a1a'" onmouseout="this.style.background='transparent'">退出登录</a>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" id="tabBtn-register" onclick="switchTab('register')">批量注册</button>
+      <button class="tab-btn" id="tabBtn-query-history" onclick="switchTab('query-history')">查询邮箱验证码和账号历史</button>
+      <button class="tab-btn" id="tabBtn-query-log" onclick="switchTab('query-log')">验证码查询历史</button>
+      <button class="tab-btn" id="tabBtn-query-only" onclick="switchTab('query-only')">查询邮箱验证码</button>
+      <button class="tab-btn" id="tabBtn-domain-body" onclick="switchTab('domain-body')">生成域名主体</button>
+      <button class="tab-btn" id="tabBtn-mail-settings" onclick="switchTab('mail-settings')">邮箱配置</button>
+      <button class="tab-btn" id="tabBtn-change-password" onclick="switchTab('change-password')">修改密码</button>
+    </div>
+
+    <div class="grid">
+    <div class="tab-pane active" id="tab-register">
+    <div class="card">
+      <h1>批量注册</h1>
+      <p>输入数量，一键创建邮箱并生成资料（邮箱密码、应用密码、姓名、年龄、生日）。</p>
+      <div class="row">
+        <label for="count">数量：</label>
+        <input id="count" type="number" min="1" max="200" value="5" />
+        <label for="registerProfile">配置：</label>
+        <select id="registerProfile" style="width:220px;" onchange="loadDomainSuffixOptions()"></select>
+        <label for="registerDomainSuffix">邮箱后缀：</label>
+        <select id="registerDomainSuffix" style="width:260px;"></select>
+        <button id="startBtn" onclick="startRegister()">开始注册</button>
+        <button id="downloadBtn" class="btn-secondary" onclick="downloadCsv()" disabled>下载 CSV</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <label for="maxGenerateLimit">一次最大生成数量：</label>
+        <input id="maxGenerateLimit" type="number" min="1" max="500" value="50" />
+        <button id="saveLimitBtn" class="btn-secondary" onclick="saveMaxLimit()">保存限制</button>
+      </div>
+      <div id="status" class="status"></div>
+      <div class="tools">
+        <table id="resultTable" class="copy-table" style="display:none;">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>邮箱</th>
+              <th>邮箱密码</th>
+              <th>应用密码</th>
+              <th>姓名</th>
+              <th>年龄</th>
+              <th>生日</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    </div>
+
+    <div class="tab-pane" id="tab-query-history">
+    <div class="card">
+      <h2>查询邮箱验证码</h2>
+      <p>输入已创建邮箱，点击查询验证码。</p>
+      <div class="row">
+        <select id="queryProfile" style="width:220px;"></select>
+        <input id="queryEmail" type="email" placeholder="例如: test@example.com" />
+        <input id="queryPlatform" type="text" placeholder="平台名（如 Grok / OpenAI）" />
+        <button id="queryBtn" onclick="queryCode()">查询验证码</button>
+      </div>
+      <div id="queryStatus" class="status"></div>
+      <div class="tools">
+        <table id="queryResultTable" class="copy-table" style="display:none; margin-top:10px;">
+          <thead>
+            <tr>
+              <th>验证码</th>
+              <th>发件人</th>
+              <th>主题</th>
+              <th>收件时间</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <div class="card">
+      <div class="section-title">
+        <h2>历史记录</h2>
+      </div>
+      <p>查看已生成账号记录（支持分页）并批量清理，防止数据过多。</p>
+
+      <div class="row">
+        <label for="historyPageSize">每页：</label>
+        <input id="historyPageSize" type="number" min="5" max="200" value="20" />
+        <input id="historyEmailQuery" type="search" placeholder="按邮箱名模糊查询" onkeydown="if(event.key==='Enter') loadHistory(1)" />
+        <button class="btn-secondary" onclick="loadHistory(1)">刷新</button>
+        <button class="btn-secondary" onclick="clearHistoryEmailQuery()">清空</button>
+        <button class="btn-secondary" onclick="exportAccountsHistoryCsv()">导出账号历史 CSV</button>
+        <button class="btn-secondary" onclick="triggerImportAccountsCsv()">导入账号历史 CSV</button>
+        <input id="importAccountsFile" type="file" accept=".csv,text/csv" style="display:none;" onchange="importAccountsCsvChanged(event)" />
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <label for="deleteMode">批量删除：</label>
+        <select id="deleteMode" onchange="onDeleteModeChange()">
+          <option value="selected">删除勾选记录</option>
+          <option value="delete_oldest">删除最旧 N 条</option>
+          <option value="keep_latest">仅保留最新 N 条</option>
+          <option value="all">删除全部</option>
+        </select>
+        <input id="deleteValue" type="number" min="1" value="100" placeholder="数量" />
+        <button id="deleteBtn" class="btn-danger" onclick="bulkDeleteAccounts()">执行删除</button>
+      </div>
+
+      <div id="historyStatus" class="status"></div>
+      <div class="tools">
+        <table id="historyTable" class="copy-table" style="display:none; margin-top:10px;">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="historyCheckAll" onclick="toggleAllHistoryChecks(this)" /></th>
+              <th>ID</th>
+              <th>邮箱</th>
+              <th>邮箱密码</th>
+              <th>应用密码</th>
+              <th>姓名</th>
+              <th>年龄</th>
+              <th>生日</th>
+              <th>状态</th>
+              <th>平台</th>
+              <th>使用时间</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="prevHistoryBtn" class="btn-secondary" onclick="prevHistoryPage()">上一页</button>
+        <button id="nextHistoryBtn" class="btn-secondary" onclick="nextHistoryPage()">下一页</button>
+      </div>
+    </div>
+    </div>
+
+    <div class="tab-pane" id="tab-query-log">
+      <div class="card">
+        <div class="section-title">
+          <h2>验证码查询历史</h2>
+        </div>
+        <p>查看验证码查询记录（支持分页）。</p>
+        <div class="row">
+          <label for="queryHistoryPageSize">每页：</label>
+          <input id="queryHistoryPageSize" type="number" min="5" max="200" value="20" />
+          <input id="queryHistoryEmailFilter" type="email" placeholder="按邮箱筛选（可选）" />
+          <button class="btn-secondary" onclick="loadQueryHistory(1)">刷新</button>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <input id="queryHistoryDeleteIds" type="text" placeholder="删除ID（逗号分隔）" />
+          <button id="deleteQuerySelectedBtn" class="btn-warning" onclick="deleteSelectedQueryHistory()">删除选中ID</button>
+          <button id="deleteQueryByEmailBtn" class="btn-danger" onclick="deleteQueryHistoryByEmail()">按邮箱删除</button>
+        </div>
+        <div id="queryHistoryStatus" class="status"></div>
+        <div class="tools">
+          <table id="queryHistoryTable" class="copy-table" style="display:none; margin-top:10px;">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="queryHistoryCheckAll" onclick="toggleAllQueryHistoryChecks(this)" /></th>
+                <th>ID</th>
+                <th>邮箱</th>
+                <th>验证码</th>
+                <th>发件人</th>
+                <th>主题</th>
+                <th>收件时间</th>
+                <th>查询时间</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button id="prevQueryHistoryBtn" class="btn-secondary" onclick="prevQueryHistoryPage()">上一页</button>
+          <button id="nextQueryHistoryBtn" class="btn-secondary" onclick="nextQueryHistoryPage()">下一页</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-query-only">
+      <div class="card">
+        <h2>查询邮箱验证码（独立模式）</h2>
+        <p>仅做验证码查询，不展示历史管理模块。</p>
+        <div class="row">
+          <select id="queryOnlyProfile" style="width:220px;"></select>
+          <input id="queryOnlyEmail" type="email" placeholder="例如: test@example.com" />
+          <input id="queryOnlyPlatform" type="text" placeholder="平台名（如 Grok / OpenAI）" />
+          <button id="queryOnlyBtn" onclick="queryCodeOnly()">查询验证码</button>
+        </div>
+        <div id="queryOnlyStatus" class="status"></div>
+        <div class="tools">
+          <table id="queryOnlyResultTable" class="copy-table" style="display:none; margin-top:10px;">
+            <thead>
+              <tr>
+                <th>验证码</th>
+                <th>发件人</th>
+                <th>主题</th>
+                <th>收件时间</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-domain-body">
+      <div class="card">
+        <h2>生成真实风格的域名主体</h2>
+        <p>批量生成用于注册时更自然的域名前缀（不含后缀，如 .com）。点击任意单元格可复制。</p>
+        <div class="row">
+          <label for="domainBodyCount">数量：</label>
+          <input id="domainBodyCount" type="number" min="1" max="500" value="30" />
+          <label for="domainBodyIndustry">行业风格：</label>
+          <select id="domainBodyIndustry" style="width:180px;">
+            <option value="general">通用</option>
+            <option value="tech">科技</option>
+            <option value="ecommerce">电商</option>
+            <option value="media">媒体</option>
+            <option value="tools">工具</option>
+            <option value="mail">邮件业务</option>
+          </select>
+          <button id="domainBodyBtn" onclick="generateDomainBodies()">生成</button>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyAvoidDigits" type="checkbox" style="width:auto;" />
+            避免数字
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyRequireDigits" type="checkbox" style="width:auto;" />
+            必含数字
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyAllowHyphen" type="checkbox" style="width:auto;" checked />
+            允许连字符 (-)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;width:auto;">
+            <input id="domainBodyRecommendSubdomain" type="checkbox" style="width:auto;" checked />
+            生成三级子域推荐
+          </label>
+        </div>
+        <div id="domainBodyStatus" class="status"></div>
+        <div class="tools">
+          <table id="domainBodyTable" class="copy-table" style="display:none; margin-top:10px;">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>域名主体</th>
+                <th>三级子域推荐</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-mail-settings">
+      <div class="card">
+        <div class="section-title">
+          <h2>邮箱配置</h2>
+        </div>
+        <p>维护多个 Cloud Mail API 配置。批量注册和验证码查询会使用所选配置。</p>
+        <div class="row">
+          <label for="activeMailProfile">默认配置：</label>
+          <select id="activeMailProfile" style="width:260px;"></select>
+          <button class="btn-secondary" onclick="addMailProfile()">新增配置</button>
+          <button id="saveMailProfilesBtn" onclick="saveMailProfiles()">保存配置</button>
+        </div>
+        <div id="mailSettingsStatus" class="status"></div>
+        <div class="tools">
+          <table id="mailProfilesTable" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>API 地址</th>
+                <th>管理员邮箱</th>
+                <th>管理员密码</th>
+                <th>角色</th>
+                <th>代理</th>
+                <th>域名后缀（逗号分隔）</th>
+                <th>默认后缀</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-change-password">
+      <div class="card">
+        <h2>修改密码</h2>
+        <p>修改当前登录账号的密码。</p>
+        <div class="row">
+          <label for="oldPassword">原密码：</label>
+          <input id="oldPassword" type="password" placeholder="请输入当前密码" style="width:220px;" />
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <label for="newPassword">新密码：</label>
+          <input id="newPassword" type="password" placeholder="至少 6 位" style="width:220px;" />
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <label for="confirmPassword">确认新密码：</label>
+          <input id="confirmPassword" type="password" placeholder="再次输入新密码" style="width:220px;" />
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button id="changePwdBtn" onclick="changePassword()">修改密码</button>
+        </div>
+        <div id="changePwdStatus" class="status"></div>
+      </div>
+    </div>
+    </div>
+  </div>
+
+<script>
+let latestRows = [];
+let historyPage = 1;
+let historyTotalPages = 1;
+let queryHistoryPage = 1;
+let queryHistoryTotalPages = 1;
+let currentInUseEmail = '';
+let mailProfiles = [];
+let activeMailProfileId = '';
+
+async function loadMaxLimit() {
+  try {
+    const res = await fetch('/api/settings/max-generate-limit');
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      document.getElementById('maxGenerateLimit').value = data.max_generate_limit;
+      document.getElementById('count').max = data.max_generate_limit;
+    }
+  } catch (_) {}
+}
+
+async function loadDomainSuffixOptions() {
+  const select = document.getElementById('registerDomainSuffix');
+  if (!select) return;
+
+  try {
+    const profileId = String(document.getElementById('registerProfile')?.value || activeMailProfileId || '').trim();
+    const qs = profileId ? `?profile_id=${encodeURIComponent(profileId)}` : '';
+    const res = await fetch(`/api/settings/domain-suffix-options${qs}`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) return;
+
+    select.innerHTML = '';
+    (data.options || []).forEach((opt) => {
+      const option = document.createElement('option');
+      option.value = opt;
+      option.textContent = opt;
+      if (opt === data.default) option.selected = true;
+      select.appendChild(option);
+    });
+  } catch (_) {}
+}
+
+function escapeAttr(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function newMailProfile() {
+  const id = `profile-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  return {
+    id,
+    name: '新配置',
+    cloud_mail_api_base: '',
+    cloud_mail_admin_email: '',
+    cloud_mail_admin_password: '',
+    cloud_mail_role_name: '',
+    proxy: '',
+    domain_suffix_options: [],
+    default_domain_suffix: '',
+  };
+}
+
+function syncProfileSelects() {
+  const ids = ['registerProfile', 'queryProfile', 'queryOnlyProfile', 'activeMailProfile'];
+  ids.forEach((id) => {
+    const select = document.getElementById(id);
+    if (!select) return;
+    const current = select.value || activeMailProfileId;
+    select.innerHTML = '';
+    mailProfiles.forEach((profile) => {
+      const option = document.createElement('option');
+      option.value = profile.id;
+      option.textContent = profile.name || profile.cloud_mail_admin_email || profile.id;
+      if ((current || activeMailProfileId) === profile.id) option.selected = true;
+      select.appendChild(option);
+    });
+  });
+}
+
+function renderMailProfilesEditor() {
+  const tbody = document.querySelector('#mailProfilesTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  mailProfiles.forEach((profile) => {
+    const tr = document.createElement('tr');
+    tr.dataset.profileId = profile.id;
+    tr.innerHTML = `
+      <td><input data-field="name" value="${escapeAttr(profile.name)}" style="width:150px;" /></td>
+      <td><input data-field="cloud_mail_api_base" value="${escapeAttr(profile.cloud_mail_api_base)}" style="width:230px;" /></td>
+      <td><input data-field="cloud_mail_admin_email" value="${escapeAttr(profile.cloud_mail_admin_email)}" style="width:220px;" /></td>
+      <td><input data-field="cloud_mail_admin_password" type="password" value="${escapeAttr(profile.cloud_mail_admin_password)}" style="width:180px;" /></td>
+      <td><input data-field="cloud_mail_role_name" value="${escapeAttr(profile.cloud_mail_role_name)}" style="width:110px;" /></td>
+      <td><input data-field="proxy" value="${escapeAttr(profile.proxy)}" style="width:170px;" /></td>
+      <td><input data-field="domain_suffix_options" value="${escapeAttr((profile.domain_suffix_options || []).join(', '))}" style="width:240px;" /></td>
+      <td><input data-field="default_domain_suffix" value="${escapeAttr(profile.default_domain_suffix)}" style="width:160px;" /></td>
+      <td><button class="btn-danger" onclick="removeMailProfile('${profile.id}')">删除</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadMailProfiles() {
+  const status = document.getElementById('mailSettingsStatus');
+  try {
+    const res = await fetch('/api/settings/mail-profiles');
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '加载邮箱配置失败');
+    }
+    mailProfiles = data.profiles || [];
+    activeMailProfileId = data.active_profile_id || (mailProfiles[0]?.id || '');
+    if (!mailProfiles.length) {
+      mailProfiles = [newMailProfile()];
+      activeMailProfileId = mailProfiles[0].id;
+    }
+    syncProfileSelects();
+    renderMailProfilesEditor();
+    loadDomainSuffixOptions();
+  } catch (e) {
+    if (status) {
+      status.className = 'status err';
+      status.textContent = `失败：${e.message || e}`;
+    }
+  }
+}
+
+function addMailProfile() {
+  const profile = newMailProfile();
+  mailProfiles.push(profile);
+  activeMailProfileId = profile.id;
+  syncProfileSelects();
+  renderMailProfilesEditor();
+}
+
+function removeMailProfile(profileId) {
+  if (mailProfiles.length <= 1) {
+    alert('至少需要保留一个邮箱配置');
+    return;
+  }
+  mailProfiles = mailProfiles.filter((profile) => profile.id !== profileId);
+  if (activeMailProfileId === profileId) {
+    activeMailProfileId = mailProfiles[0]?.id || '';
+  }
+  syncProfileSelects();
+  renderMailProfilesEditor();
+}
+
+function collectMailProfilesFromEditor() {
+  const rows = Array.from(document.querySelectorAll('#mailProfilesTable tbody tr'));
+  return rows.map((row) => {
+    const profile = { id: row.dataset.profileId || '' };
+    row.querySelectorAll('[data-field]').forEach((input) => {
+      const field = input.getAttribute('data-field');
+      if (!field) return;
+      if (field === 'domain_suffix_options') {
+        profile[field] = String(input.value || '')
+          .replace(/\n/g, ',')
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean);
+      } else {
+        profile[field] = String(input.value || '').trim();
+      }
+    });
+    return profile;
+  });
+}
+
+async function saveMailProfiles() {
+  const status = document.getElementById('mailSettingsStatus');
+  const btn = document.getElementById('saveMailProfilesBtn');
+  const profiles = collectMailProfilesFromEditor();
+  const active = String(document.getElementById('activeMailProfile')?.value || activeMailProfileId || '').trim();
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在保存邮箱配置...';
+
+  try {
+    const res = await fetch('/api/settings/mail-profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profiles, active_profile_id: active })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '保存失败');
+    }
+    mailProfiles = data.profiles || [];
+    activeMailProfileId = data.active_profile_id || (mailProfiles[0]?.id || '');
+    syncProfileSelects();
+    renderMailProfilesEditor();
+    loadDomainSuffixOptions();
+    status.className = 'status ok';
+    status.textContent = '邮箱配置已保存';
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveMaxLimit() {
+  const status = document.getElementById('status');
+  const value = Number(document.getElementById('maxGenerateLimit').value || 0);
+  if (!value || value < 1 || value > 500) {
+    status.className = 'status err';
+    status.textContent = '一次最大生成数量必须在 1-500';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/settings/max-generate-limit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '保存失败');
+    }
+    document.getElementById('count').max = data.max_generate_limit;
+    status.className = 'status ok';
+    status.textContent = `一次最大生成数量已更新为 ${data.max_generate_limit}`;
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  }
+}
+
+async function startRegister() {
+  const count = Number(document.getElementById('count').value || 0);
+  const profileId = String(document.getElementById('registerProfile').value || '').trim();
+  const domainSuffix = String(document.getElementById('registerDomainSuffix').value || '').trim();
+  const status = document.getElementById('status');
+  const btn = document.getElementById('startBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+
+  if (!count || count < 1) {
+    status.className = 'status err';
+    status.textContent = '请输入大于 0 的数量';
+    return;
+  }
+
+  if (domainSuffix && !domainSuffix.includes('.')) {
+    status.className = 'status err';
+    status.textContent = '邮箱后缀格式不正确，例如 mailyplus.com';
+    return;
+  }
+
+  btn.disabled = true;
+  downloadBtn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在注册，请稍候...';
+
+  try {
+    const res = await fetch('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count, domain_suffix: domainSuffix, profile_id: profileId })
+    });
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '注册失败');
+    }
+
+    latestRows = data.data || [];
+    renderTable(latestRows);
+    status.className = 'status ok';
+    status.textContent = `完成：成功生成 ${latestRows.length} 条`;
+    downloadBtn.disabled = latestRows.length === 0;
+    loadHistory(1);
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function queryCodeCommon(email, platform, profileId, statusEl, btnEl, tableEl, refreshAccountHistory = false) {
+  const status = statusEl;
+  const btn = btnEl;
+  const table = tableEl;
+  const tbody = table.querySelector('tbody');
+
+  tbody.innerHTML = '';
+  table.style.display = 'none';
+
+  if (!email || !email.includes('@')) {
+    status.className = 'status err';
+    status.textContent = '请输入有效邮箱地址';
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在查询验证码...';
+
+  try {
+    const res = await fetch('/api/query-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, platform, profile_id: profileId })
+    });
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '查询失败');
+    }
+
+    if (data.code) {
+      status.className = 'status ok';
+      status.textContent = `邮箱 ${email} 已查询到验证码`;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td data-copy="${data.code || ''}">${data.code || ''}</td>
+        <td data-copy="${data.sender || ''}">${data.sender || ''}</td>
+        <td data-copy="${data.subject || ''}">${data.subject || ''}</td>
+        <td data-copy="${data.received_time || ''}">${data.received_time || ''}</td>
+      `;
+      tbody.appendChild(tr);
+      table.style.display = 'table';
+      bindCopyHandlers();
+      loadQueryHistory(1);
+      if (refreshAccountHistory) loadHistory(historyPage);
+    } else {
+      status.className = 'status';
+      status.textContent = `邮箱 ${email} 暂未查询到验证码`;
+      if (refreshAccountHistory) loadHistory(historyPage);
+    }
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function queryCode() {
+  const email = String(document.getElementById('queryEmail').value || '').trim();
+  const platform = String(document.getElementById('queryPlatform').value || '').trim();
+  const profileId = String(document.getElementById('queryProfile').value || '').trim();
+  await queryCodeCommon(
+    email,
+    platform,
+    profileId,
+    document.getElementById('queryStatus'),
+    document.getElementById('queryBtn'),
+    document.getElementById('queryResultTable'),
+    true,
+  );
+}
+
+async function queryCodeOnly() {
+  const email = String(document.getElementById('queryOnlyEmail').value || '').trim();
+  const platform = String(document.getElementById('queryOnlyPlatform').value || '').trim();
+  const profileId = String(document.getElementById('queryOnlyProfile').value || '').trim();
+  await queryCodeCommon(
+    email,
+    platform,
+    profileId,
+    document.getElementById('queryOnlyStatus'),
+    document.getElementById('queryOnlyBtn'),
+    document.getElementById('queryOnlyResultTable'),
+    false,
+  );
+}
+
+async function generateDomainBodies() {
+  const count = Number(document.getElementById('domainBodyCount').value || 0);
+  const industry = String(document.getElementById('domainBodyIndustry').value || 'general');
+  const avoidDigits = !!document.getElementById('domainBodyAvoidDigits').checked;
+  const requireDigits = !!document.getElementById('domainBodyRequireDigits').checked;
+  const allowHyphen = !!document.getElementById('domainBodyAllowHyphen').checked;
+  const recommendSubdomain = !!document.getElementById('domainBodyRecommendSubdomain').checked;
+
+  const status = document.getElementById('domainBodyStatus');
+  const btn = document.getElementById('domainBodyBtn');
+  const table = document.getElementById('domainBodyTable');
+  const tbody = table.querySelector('tbody');
+
+  if (!count || count < 1 || count > 500) {
+    status.className = 'status err';
+    status.textContent = '数量必须在 1-500';
+    return;
+  }
+
+  if (avoidDigits && requireDigits) {
+    status.className = 'status err';
+    status.textContent = '“避免数字”和“必含数字”不能同时开启';
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在生成...';
+  table.style.display = 'none';
+  tbody.innerHTML = '';
+
+  try {
+    const res = await fetch('/api/domain-bodies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        count,
+        industry,
+        avoid_digits: avoidDigits,
+        require_digits: requireDigits,
+        allow_hyphen: allowHyphen,
+        recommend_subdomain: recommendSubdomain,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '生成失败');
+    }
+
+    const items = data.items || [];
+    const subdomains = data.subdomains || [];
+
+    items.forEach((name, idx) => {
+      const sub = subdomains[idx] || '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td data-copy="${idx + 1}">${idx + 1}</td>
+        <td data-copy="${name || ''}">${name || ''}</td>
+        <td data-copy="${sub}">${sub}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    table.style.display = items.length ? 'table' : 'none';
+    bindCopyHandlers();
+    status.className = 'status ok';
+    status.textContent = `完成：已生成 ${items.length} 条${recommendSubdomain ? '，并附带三级子域推荐' : ''}`;
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderTable(rows) {
+  const table = document.getElementById('resultTable');
+  const tbody = table.querySelector('tbody');
+  tbody.innerHTML = '';
+
+  rows.forEach((r, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td data-copy="${idx + 1}">${idx + 1}</td>
+      <td data-copy="${r.email || ''}">${r.email || ''}</td>
+      <td data-copy="${r.password || ''}">${r.password || ''}</td>
+      <td data-copy="${r.app_password || ''}">${r.app_password || ''}</td>
+      <td data-copy="${r.name || ''}">${r.name || ''}</td>
+      <td data-copy="${r.age || ''}">${r.age || ''}</td>
+      <td data-copy="${r.birthday || ''}">${r.birthday || ''}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  table.style.display = rows.length ? 'table' : 'none';
+  bindCopyHandlers();
+}
+
+function onDeleteModeChange() {
+  const mode = document.getElementById('deleteMode').value;
+  const valueInput = document.getElementById('deleteValue');
+  if (mode === 'all' || mode === 'selected') {
+    valueInput.disabled = true;
+    valueInput.value = '';
+    valueInput.placeholder = mode === 'selected' ? '使用勾选项' : '无需输入';
+  } else if (mode === 'keep_latest') {
+    valueInput.disabled = false;
+    valueInput.placeholder = '保留数量';
+    if (!valueInput.value) valueInput.value = '100';
+  } else {
+    valueInput.disabled = false;
+    valueInput.placeholder = '删除数量';
+    if (!valueInput.value) valueInput.value = '100';
+  }
+}
+
+function getSelectedHistoryIds() {
+  return Array.from(document.querySelectorAll('.history-row-check:checked'))
+    .map((input) => Number(input.value || 0))
+    .filter((id) => id > 0);
+}
+
+function toggleAllHistoryChecks(source) {
+  document.querySelectorAll('.history-row-check').forEach((input) => {
+    input.checked = !!source.checked;
+  });
+}
+
+async function bulkDeleteAccounts() {
+  const mode = document.getElementById('deleteMode').value;
+  const valueRaw = document.getElementById('deleteValue').value;
+  const status = document.getElementById('historyStatus');
+  const btn = document.getElementById('deleteBtn');
+  const selectedIds = getSelectedHistoryIds();
+
+  let value = Number(valueRaw || 0);
+  if (mode === 'selected' && !selectedIds.length) {
+    status.className = 'status err';
+    status.textContent = '请先勾选要删除的账号记录';
+    return;
+  }
+  if (!['all', 'selected'].includes(mode) && (!value || value < 1)) {
+    status.className = 'status err';
+    status.textContent = '请填写大于 0 的数量';
+    return;
+  }
+
+  const confirmText = mode === 'all'
+    ? '确认删除全部历史记录吗？此操作不可恢复。'
+    : mode === 'selected'
+      ? `确认删除已勾选的 ${selectedIds.length} 条账号记录吗？此操作不可恢复。`
+      : '确认执行批量删除吗？此操作不可恢复。';
+  if (!window.confirm(confirmText)) {
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在删除...';
+
+  try {
+    const payload = { mode };
+    if (mode === 'selected') payload.ids = selectedIds;
+    if (mode === 'keep_latest') payload.keep_latest = value;
+    if (mode === 'delete_oldest') payload.delete_count = value;
+
+    const res = await fetch('/api/history/accounts/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '删除失败');
+    }
+
+    status.className = 'status ok';
+    status.textContent = `已删除 ${data.deleted} 条，剩余 ${data.remaining} 条`;
+    loadHistory(1);
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadHistory(page) {
+  const pageSize = Number(document.getElementById('historyPageSize').value || 20);
+  const emailQuery = String(document.getElementById('historyEmailQuery').value || '').trim();
+  const status = document.getElementById('historyStatus');
+  const table = document.getElementById('historyTable');
+  const tbody = table.querySelector('tbody');
+
+  if (!pageSize || pageSize < 5 || pageSize > 200) {
+    status.className = 'status err';
+    status.textContent = '每页数量必须在 5-200';
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+    });
+    if (emailQuery) params.set('email_query', emailQuery);
+    const res = await fetch(`/api/history/accounts?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '加载历史失败');
+    }
+
+    historyPage = data.page;
+    historyTotalPages = data.total_pages || 1;
+
+    const checkAll = document.getElementById('historyCheckAll');
+    if (checkAll) checkAll.checked = false;
+    tbody.innerHTML = '';
+    (data.items || []).forEach((r) => {
+      const tr = document.createElement('tr');
+      const isInUse = !!r.used || (currentInUseEmail && String(r.email || '').toLowerCase() === currentInUseEmail.toLowerCase());
+      if (isInUse) tr.classList.add('in-use-row');
+
+      tr.innerHTML = `
+        <td><input class="history-row-check" type="checkbox" value="${r.id || ''}" /></td>
+        <td data-copy="${r.id || ''}">${r.id || ''}</td>
+        <td data-copy="${r.email || ''}">${r.email || ''}</td>
+        <td data-copy="${r.password || ''}">${r.password || ''}</td>
+        <td data-copy="${r.app_password || ''}">${r.app_password || ''}</td>
+        <td data-copy="${r.name || ''}">${r.name || ''}</td>
+        <td data-copy="${r.age || ''}">${r.age || ''}</td>
+        <td data-copy="${r.birthday || ''}">${r.birthday || ''}</td>
+        <td data-copy="${isInUse ? '正在使用' : '未使用'}">${isInUse ? '正在使用' : '未使用'}</td>
+        <td data-copy="${r.platforms || ''}">${r.platforms || ''}</td>
+        <td data-copy="${r.used_at || ''}">${r.used_at || ''}</td>
+        <td data-copy="${r.created_at || ''}">${r.created_at || ''}</td>
+        <td>
+          <button class="${isInUse ? 'btn-secondary' : 'btn-warning'}" onclick="setUsed('${(r.email || '').replace(/'/g, "\\'")}', ${isInUse ? 'false' : 'true'})">
+            ${isInUse ? '改为未使用' : '标记正在使用'}
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    table.style.display = (data.items || []).length ? 'table' : 'none';
+    bindCopyHandlers();
+    status.className = 'status';
+    status.textContent = emailQuery
+      ? `邮箱包含“${emailQuery}”：第 ${historyPage} / ${historyTotalPages} 页，共 ${data.total} 条`
+      : `第 ${historyPage} / ${historyTotalPages} 页，共 ${data.total} 条`;
+    document.getElementById('prevHistoryBtn').disabled = historyPage <= 1;
+    document.getElementById('nextHistoryBtn').disabled = historyPage >= historyTotalPages;
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  }
+}
+
+function clearHistoryEmailQuery() {
+  document.getElementById('historyEmailQuery').value = '';
+  loadHistory(1);
+}
+
+async function setUsed(email, used) {
+  let platform = '';
+  if (used) {
+    platform = prompt('请输入平台名（可留空）', '') || '';
+  }
+
+  try {
+    const res = await fetch('/api/accounts/set-used', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, used, platform: String(platform).trim() })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '状态更新失败');
+    }
+
+    if (used) {
+      currentInUseEmail = email;
+    } else if (currentInUseEmail && currentInUseEmail.toLowerCase() === String(email).toLowerCase()) {
+      currentInUseEmail = '';
+    }
+
+    showCopyToast(`${email} 已更新为${used ? '正在使用' : '未使用'}`);
+    loadHistory(historyPage);
+  } catch (e) {
+    alert(`状态更新失败：${e.message || e}`);
+  }
+}
+
+function prevHistoryPage() {
+  if (historyPage > 1) loadHistory(historyPage - 1);
+}
+
+function nextHistoryPage() {
+  if (historyPage < historyTotalPages) loadHistory(historyPage + 1);
+}
+
+async function loadQueryHistory(page) {
+  const pageSize = Number(document.getElementById('queryHistoryPageSize').value || 20);
+  const status = document.getElementById('queryHistoryStatus');
+  const table = document.getElementById('queryHistoryTable');
+  const tbody = table.querySelector('tbody');
+
+  if (!pageSize || pageSize < 5 || pageSize > 200) {
+    status.className = 'status err';
+    status.textContent = '每页数量必须在 5-200';
+    return;
+  }
+
+  try {
+    const emailFilter = String(document.getElementById('queryHistoryEmailFilter').value || '').trim();
+    const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (emailFilter) query.set('email', emailFilter);
+
+    const res = await fetch(`/api/history/query-code?${query.toString()}`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '加载验证码查询历史失败');
+    }
+
+    queryHistoryPage = data.page;
+    queryHistoryTotalPages = data.total_pages || 1;
+
+    tbody.innerHTML = '';
+    (data.items || []).forEach((r) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="checkbox" class="query-history-check" value="${r.id || ''}" /></td>
+        <td data-copy="${r.id || ''}">${r.id || ''}</td>
+        <td data-copy="${r.email || ''}">${r.email || ''}</td>
+        <td data-copy="${r.code || ''}">${r.code || ''}</td>
+        <td data-copy="${r.sender || ''}">${r.sender || ''}</td>
+        <td data-copy="${r.subject || ''}">${r.subject || ''}</td>
+        <td data-copy="${r.received_time || ''}">${r.received_time || ''}</td>
+        <td data-copy="${r.queried_at || ''}">${r.queried_at || ''}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    table.style.display = (data.items || []).length ? 'table' : 'none';
+    bindCopyHandlers();
+    status.className = 'status';
+    status.textContent = `第 ${queryHistoryPage} / ${queryHistoryTotalPages} 页，共 ${data.total} 条`;
+    document.getElementById('prevQueryHistoryBtn').disabled = queryHistoryPage <= 1;
+    document.getElementById('nextQueryHistoryBtn').disabled = queryHistoryPage >= queryHistoryTotalPages;
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  }
+}
+
+function prevQueryHistoryPage() {
+  if (queryHistoryPage > 1) loadQueryHistory(queryHistoryPage - 1);
+}
+
+function nextQueryHistoryPage() {
+  if (queryHistoryPage < queryHistoryTotalPages) loadQueryHistory(queryHistoryPage + 1);
+}
+
+function toggleAllQueryHistoryChecks(el) {
+  const checked = !!el.checked;
+  document.querySelectorAll('.query-history-check').forEach((c) => {
+    c.checked = checked;
+  });
+}
+
+function getSelectedQueryHistoryIds() {
+  return Array.from(document.querySelectorAll('.query-history-check:checked'))
+    .map((c) => Number(c.value || 0))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+async function deleteSelectedQueryHistory() {
+  const idsText = String(document.getElementById('queryHistoryDeleteIds').value || '').trim();
+  let ids = getSelectedQueryHistoryIds();
+  if (!ids.length && idsText) {
+    ids = idsText.split(',').map((x) => Number(String(x).trim())).filter((n) => Number.isInteger(n) && n > 0);
+  }
+
+  const status = document.getElementById('queryHistoryStatus');
+  const btn = document.getElementById('deleteQuerySelectedBtn');
+
+  if (!ids.length) {
+    status.className = 'status err';
+    status.textContent = '请先勾选记录或输入要删除的ID';
+    return;
+  }
+
+  if (!window.confirm(`确认删除 ${ids.length} 条查询历史吗？`)) return;
+
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/history/query-code/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '删除失败');
+    }
+
+    status.className = 'status ok';
+    status.textContent = `已删除 ${data.deleted} 条记录`;
+    document.getElementById('queryHistoryDeleteIds').value = '';
+    loadQueryHistory(1);
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteQueryHistoryByEmail() {
+  const email = String(document.getElementById('queryHistoryEmailFilter').value || '').trim();
+  const status = document.getElementById('queryHistoryStatus');
+  const btn = document.getElementById('deleteQueryByEmailBtn');
+
+  if (!email || !email.includes('@')) {
+    status.className = 'status err';
+    status.textContent = '请先输入有效邮箱再按邮箱删除';
+    return;
+  }
+
+  if (!window.confirm(`确认删除邮箱 ${email} 的全部查询历史吗？`)) return;
+
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/history/query-code/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '删除失败');
+    }
+
+    status.className = 'status ok';
+    status.textContent = `已删除 ${data.deleted} 条记录`;
+    loadQueryHistory(1);
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showCopyToast(text) {
+  const toast = document.getElementById('copyToast');
+  if (!toast) return;
+  toast.textContent = text;
+  toast.style.display = 'block';
+  clearTimeout(window.__copyToastTimer);
+  window.__copyToastTimer = setTimeout(() => {
+    toast.style.display = 'none';
+  }, 1200);
+}
+
+async function copyText(value) {
+  const v = String(value || '').trim();
+  if (!v) return;
+  try {
+    await navigator.clipboard.writeText(v);
+    showCopyToast(`已复制：${v}`);
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = v;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showCopyToast(`已复制：${v}`);
+  }
+}
+
+function bindCopyHandlers() {
+  document.querySelectorAll('table.copy-table td[data-copy]').forEach((td) => {
+    td.onclick = () => copyText(td.getAttribute('data-copy') || td.textContent || '');
+  });
+}
+
+function downloadCsv() {
+  if (!latestRows.length) return;
+  const qs = encodeURIComponent(JSON.stringify(latestRows));
+  window.location.href = `/api/export.csv?rows=${qs}`;
+}
+
+function exportAccountsHistoryCsv() {
+  window.location.href = '/api/history/accounts/export.csv';
+}
+
+function triggerImportAccountsCsv() {
+  const input = document.getElementById('importAccountsFile');
+  if (input) input.click();
+}
+
+async function importAccountsCsvChanged(event) {
+  const status = document.getElementById('historyStatus');
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  status.className = 'status';
+  status.textContent = '正在导入账号历史...';
+
+  try {
+    const res = await fetch('/api/history/accounts/import.csv', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '导入失败');
+    }
+
+    status.className = 'status ok';
+    status.textContent = `导入完成：成功 ${data.imported} 条，跳过 ${data.skipped} 条`;
+    loadHistory(1);
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `导入失败：${e.message || e}`;
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function changePassword() {
+  const status = document.getElementById('changePwdStatus');
+  const btn = document.getElementById('changePwdBtn');
+  const oldPassword = document.getElementById('oldPassword').value;
+  const newPassword = document.getElementById('newPassword').value;
+  const confirmPassword = document.getElementById('confirmPassword').value;
+
+  status.className = 'status';
+  status.textContent = '';
+
+  if (!oldPassword) { status.className = 'status err'; status.textContent = '请输入原密码'; return; }
+  if (!newPassword || newPassword.length < 6) { status.className = 'status err'; status.textContent = '新密码至少 6 位'; return; }
+  if (newPassword !== confirmPassword) { status.className = 'status err'; status.textContent = '两次输入的新密码不一致'; return; }
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在修改...';
+
+  try {
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      status.className = 'status ok';
+      status.textContent = '密码修改成功';
+      document.getElementById('oldPassword').value = '';
+      document.getElementById('newPassword').value = '';
+      document.getElementById('confirmPassword').value = '';
+    } else {
+      status.className = 'status err';
+      status.textContent = data.message || '修改失败';
+    }
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `请求失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function switchTab(tabName) {
+  const map = {
+    register: 'tab-register',
+    'query-history': 'tab-query-history',
+    'query-log': 'tab-query-log',
+    'query-only': 'tab-query-only',
+    'domain-body': 'tab-domain-body',
+    'mail-settings': 'tab-mail-settings',
+    'change-password': 'tab-change-password',
+  };
+
+  document.querySelectorAll('.tab-pane').forEach((el) => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach((el) => el.classList.remove('active'));
+
+  const paneId = map[tabName];
+  const pane = document.getElementById(paneId);
+  const btn = document.getElementById(`tabBtn-${tabName}`);
+  if (pane) pane.classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+
+window.addEventListener('load', () => {
+  fetch('/api/me').then(r=>r.json()).then(d=>{if(d.ok)document.getElementById('currentUser').textContent=d.username;});
+  loadMaxLimit();
+  loadMailProfiles();
+  onDeleteModeChange();
+  loadHistory(1);
+  loadQueryHistory(1);
+  bindCopyHandlers();
+  switchTab('register');
+});
+</script>
+</body>
+</html>
