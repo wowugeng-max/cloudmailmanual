@@ -60,6 +60,11 @@ class RowVerificationUiTest(unittest.TestCase):
         self.assertIn("applyTheme", html)
         self.assertIn("cloudmailmanual-theme", html)
 
+    def test_tab_panels_allow_wide_tables_to_scroll_inside_cards(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+
+        self.assertRegex(html, r"\.tab-pane\s*\{[^}]*min-width:\s*0")
+
     def test_mail_settings_exposes_verification_rule_editor(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
 
