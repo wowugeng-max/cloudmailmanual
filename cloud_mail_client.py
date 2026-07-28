@@ -163,7 +163,16 @@ class CloudMailClient:
                 return code
 
         if allow_digits:
-            # 4) 纯数字优先从更像正文展示位的地方提取，避免命中颜色值/样式数字
+            # 4) 支持邮件模板将 6 位数字按 NNN NNN 分组展示
+            for left, right in re.findall(
+                r"(?<![A-Z0-9])(\d{3})\s+(\d{3})(?![A-Z0-9])",
+                normalized,
+            ):
+                code = f"{left}{right}"
+                if code != "177010":
+                    return code
+
+            # 5) 纯数字优先从更像正文展示位的地方提取，避免命中颜色值/样式数字
             for code in re.findall(r"(?:verification code|验证码|your code|code is|code below|enter this code)[^\d]{0,40}(\d{6})", normalized, re.IGNORECASE):
                 if code != "177010":
                     return code
