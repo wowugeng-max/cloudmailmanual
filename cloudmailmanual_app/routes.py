@@ -348,13 +348,14 @@ def register_routes(app):
     
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(["email", "password", "app_password", "name", "age", "birthday"])
+        writer.writerow(["email", "password", "app_password", "profile_id", "name", "age", "birthday"])
         for item in rows:
             writer.writerow(
                 [
                     item.get("email", ""),
                     item.get("password", ""),
                     item.get("app_password", ""),
+                    item.get("profile_id", ""),
                     item.get("name", ""),
                     item.get("age", ""),
                     item.get("birthday", ""),
@@ -377,7 +378,7 @@ def register_routes(app):
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT email, password, app_password, name, age, birthday,
+                SELECT email, password, app_password, profile_id, name, age, birthday,
                        created_at, used, used_at, platforms
                 FROM accounts
                 ORDER BY id DESC
@@ -387,7 +388,7 @@ def register_routes(app):
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         writer.writerow([
-            "email", "password", "app_password", "name", "age", "birthday",
+            "email", "password", "app_password", "profile_id", "name", "age", "birthday",
             "created_at", "used", "used_at", "platforms",
         ])
         for r in rows:
@@ -396,6 +397,7 @@ def register_routes(app):
                 d.get("email", ""),
                 d.get("password", ""),
                 d.get("app_password", ""),
+                d.get("profile_id", ""),
                 d.get("name", ""),
                 d.get("age", ""),
                 d.get("birthday", ""),

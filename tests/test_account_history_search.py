@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from cloudmailmanual_app import database
 from cloudmailmanual_app.repositories import accounts
 
 
@@ -21,6 +22,7 @@ class AccountHistorySearchTest(unittest.TestCase):
                     email TEXT NOT NULL,
                     password TEXT NOT NULL,
                     app_password TEXT NOT NULL,
+                    profile_id TEXT NOT NULL DEFAULT '',
                     name TEXT NOT NULL,
                     age INTEGER NOT NULL,
                     birthday TEXT NOT NULL,
@@ -40,10 +42,10 @@ class AccountHistorySearchTest(unittest.TestCase):
                 conn.execute(
                     """
                     INSERT INTO accounts (
-                        email, password, app_password, name, age, birthday, created_at,
+                        email, password, app_password, profile_id, name, age, birthday, created_at,
                         used, used_at, platforms
                     )
-                    VALUES (?, ?, ?, ?, 25, '2000-01-01', '2026-01-01 00:00:00', 0, NULL, '')
+                    VALUES (?, ?, ?, 'work', ?, 25, '2000-01-01', '2026-01-01 00:00:00', 0, NULL, '')
                     """,
                     (email, password, app_password, name),
                 )
@@ -69,6 +71,11 @@ class AccountHistorySearchTest(unittest.TestCase):
         self.assertEqual(data["total"], 0)
         self.assertEqual(data["items"], [])
 
+    def test_history_returns_mail_profile_id_for_row_queries(self):
+        data = accounts.get_accounts_history(page=1, page_size=20)
+
+        self.assertEqual(data["items"][0]["profile_id"], "work")
+
     def test_bulk_delete_selected_account_ids_only(self):
         deleted, remaining = accounts.bulk_delete_accounts(mode="selected", ids=[1, 3])
 
@@ -78,6 +85,52 @@ class AccountHistorySearchTest(unittest.TestCase):
         self.assertEqual(deleted, 2)
         self.assertEqual(remaining, 1)
         self.assertEqual(rows, [(2, "mary.wilson@example.com")])
+
+
+class AccountProfileMigrationTest(unittest.TestCase):
+    def test_init_db_adds_profile_id_to_existing_accounts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "legacy.db")
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        email TEXT NOT NULL,
+                        password TEXT NOT NULL,
+                        app_password TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        age INTEGER NOT NULL,
+                        birthday TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        used INTEGER NOT NULL DEFAULT 0,
+                        used_at TEXT,
+                        platforms TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO accounts (
+                        email, password, app_password, name, age, birthday, created_at
+                    ) VALUES ('legacy@example.com', 'p', 'a', 'Legacy', 20, '2000-01-01', '2026-01-01')
+                    """
+                )
+                conn.commit()
+
+            original_db_path = database.DB_PATH
+            database.DB_PATH = db_path
+            try:
+                database.init_db()
+            finally:
+                database.DB_PATH = original_db_path
+
+            with sqlite3.connect(db_path) as conn:
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(accounts)")]
+                profile_id = conn.execute("SELECT profile_id FROM accounts").fetchone()[0]
+
+            self.assertIn("profile_id", columns)
+            self.assertEqual(profile_id, "")
 
 
 if __name__ == "__main__":

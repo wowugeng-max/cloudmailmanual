@@ -14,6 +14,7 @@ def init_db() -> None:
                 email TEXT NOT NULL,
                 password TEXT NOT NULL,
                 app_password TEXT NOT NULL,
+                profile_id TEXT NOT NULL DEFAULT '',
                 name TEXT NOT NULL,
                 age INTEGER NOT NULL,
                 birthday TEXT NOT NULL,
@@ -57,5 +58,7 @@ def init_db() -> None:
             conn.execute("ALTER TABLE accounts ADD COLUMN used_at TEXT")
         if "platforms" not in cols:
             conn.execute("ALTER TABLE accounts ADD COLUMN platforms TEXT NOT NULL DEFAULT ''")
+        if "profile_id" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN profile_id TEXT NOT NULL DEFAULT ''")
 
         conn.commit()

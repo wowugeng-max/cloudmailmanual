@@ -47,6 +47,7 @@ def batch_register(count: int, domain_suffix: str = "", profile_id: str = "") ->
                 "email": email,
                 "password": password,
                 "app_password": generate_app_password(12),
+                "profile_id": str(client.conf.get("id", "") or profile_id),
                 "name": profile["name"],
                 "age": profile["age"],
                 "birthday": profile["birthday"],

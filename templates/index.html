@@ -1,26 +1,55 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cloud Mail 批量注册</title>
+  <script>
+    try {
+      document.documentElement.dataset.theme = localStorage.getItem('cloudmailmanual-theme') === 'light' ? 'light' : 'dark';
+    } catch (_) {}
+  </script>
   <style>
     :root {
-      --bg:#0b1020; --card:#141b34; --text:#e8ecff; --muted:#a8b0d3;
+      color-scheme:dark;
+      --page-bg:#0b1020; --card-bg:rgba(20,27,52,.92); --text:#e8ecff; --muted:#a8b0d3;
       --primary:#6b8cff; --ok:#19c37d; --danger:#ff6b6b; --warning:#ffb020;
+      --border:rgba(255,255,255,.12); --field-bg:#0f1530;
+      --tab-bg:#23305a; --tab-text:#d9e2ff;
+      --table-head-bg:#1a2347; --table-head-text:#cdd6ff;
+      --secondary-bg:#2f3b67; --danger-bg:#a83333; --warning-bg:#855d14;
+      --in-use-bg:rgba(25,195,125,.14); --copy-hover-bg:rgba(107,140,255,.16);
+      --card-shadow:0 10px 30px rgba(0,0,0,.32);
+      --logout:#ff8888; --logout-border:#5a3a3a; --logout-hover:#3a1a1a;
     }
-    body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; background:linear-gradient(135deg,#0b1020,#111a3a); color:var(--text); }
+    :root[data-theme="light"] {
+      color-scheme:light;
+      --page-bg:#eef2f7; --card-bg:#ffffff; --text:#182033; --muted:#5f697c;
+      --primary:#3e63c7; --ok:#087f5b; --danger:#c92a2a; --warning:#9c6500;
+      --border:#cbd3df; --field-bg:#ffffff;
+      --tab-bg:#dfe5ee; --tab-text:#28354d;
+      --table-head-bg:#e2e8f0; --table-head-text:#25324a;
+      --secondary-bg:#52627b; --danger-bg:#b4232b; --warning-bg:#8a5a00;
+      --in-use-bg:rgba(8,127,91,.12); --copy-hover-bg:rgba(62,99,199,.12);
+      --card-shadow:0 8px 24px rgba(38,49,66,.12);
+      --logout:#b4232b; --logout-border:#d7a4a8; --logout-hover:#fbeaec;
+    }
+    body { min-height:100vh; margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; background:var(--page-bg); color:var(--text); transition:background-color .2s ease,color .2s ease; }
     .wrap { max-width:1200px; margin:32px auto; padding:0 16px 24px; }
     .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+    .topbar-actions { display:flex; align-items:center; gap:12px; }
+    .current-user { color:var(--muted); font-size:13px; }
+    .logout-link { color:var(--logout); text-decoration:none; font-size:13px; border:1px solid var(--logout-border); padding:5px 14px; border-radius:6px; }
+    .logout-link:hover { background:var(--logout-hover); }
     .brand { font-size:24px; font-weight:700; letter-spacing:.2px; }
     .sub { color:var(--muted); font-size:13px; }
     .grid { display:grid; grid-template-columns:1fr; gap:14px; }
     .tabs { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
-    .tab-btn { background:#23305a; color:#d9e2ff; border:1px solid rgba(255,255,255,.12); }
+    .tab-btn { background:var(--tab-bg); color:var(--tab-text); border:1px solid var(--border); }
     .tab-btn.active { background:var(--primary); color:#fff; }
     .tab-pane { display:none; }
     .tab-pane.active { display:block; }
-    .card { background:rgba(20,27,52,.92); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.32); }
+    .card { background:var(--card-bg); border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow:var(--card-shadow); }
     h1, h2 { margin:0 0 6px; }
     h1 { font-size:26px; }
     h2 { font-size:18px; }
@@ -28,25 +57,64 @@
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     input, select {
       width:220px; padding:9px 11px; border-radius:9px;
-      border:1px solid rgba(255,255,255,.16); background:#0f1530; color:var(--text);
+      border:1px solid var(--border); background:var(--field-bg); color:var(--text);
     }
+    input::placeholder { color:var(--muted); }
     #count { width:120px; }
     button { padding:9px 13px; border:0; border-radius:9px; cursor:pointer; color:white; background:var(--primary); font-weight:600; }
     button:disabled { opacity:.6; cursor:not-allowed; }
-    .btn-secondary { background:#2f3b67; }
-    .btn-danger { background:#a83333; }
-    .btn-warning { background:#855d14; }
+    .btn-secondary { background:var(--secondary-bg); }
+    .btn-danger { background:var(--danger-bg); }
+    .btn-warning { background:var(--warning-bg); }
     .status { margin-top:10px; color:var(--muted); }
     .status.ok { color:var(--ok); }
     .status.err { color:var(--danger); }
     table { width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }
-    #historyTable tr.in-use-row td { background: rgba(25, 195, 125, 0.14); }
-    th, td { border-bottom:1px solid rgba(255,255,255,.10); text-align:left; padding:9px 7px; }
-    th { color:#cdd6ff; font-weight:700; position:sticky; top:0; background:#1a2347; }
-    .tools { margin-top:10px; }
+    #historyTable tr.in-use-row td { background:var(--in-use-bg); }
+    th, td { border-bottom:1px solid var(--border); text-align:left; padding:9px 7px; }
+    th { color:var(--table-head-text); font-weight:700; position:sticky; top:0; background:var(--table-head-bg); }
+    .tools { margin-top:10px; overflow-x:auto; }
+    #historyTable { min-width:1480px; table-layout:auto; }
+    #historyTable th, #historyTable td { vertical-align:middle; }
+    #historyTable .history-select-col { width:36px; min-width:36px; max-width:36px; padding-left:4px; padding-right:4px; text-align:center; }
+    #historyTable .history-select-col input { width:16px; height:16px; padding:0; margin:0; }
+    #historyTable .history-id-col { width:44px; min-width:44px; }
+    #historyTable .history-email-col { width:210px; min-width:210px; max-width:210px; }
+    .history-email-value { display:flex; flex-direction:column; gap:2px; min-width:0; line-height:1.3; }
+    .history-email-prefix, .history-email-domain { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .history-email-domain { color:var(--muted); font-size:12px; }
+    #historyTable .history-password-col { min-width:150px; }
+    #historyTable .history-app-password-col { min-width:125px; }
+    #historyTable .history-name-col { min-width:105px; }
+    #historyTable .history-age-col { width:48px; min-width:48px; }
+    #historyTable .history-birthday-col { min-width:92px; }
+    #historyTable .history-status-col { width:68px; min-width:68px; }
+    #historyTable .history-platform-col { min-width:155px; }
+    #historyTable .history-time-col { min-width:122px; }
+    #historyTable .history-code-col { width:120px; min-width:120px; }
+    #historyTable .history-action-col { width:118px; min-width:118px; }
+    .history-code-stack { display:flex; flex-direction:column; align-items:flex-start; gap:6px; min-height:58px; }
+    .history-code-btn { padding:7px 10px; white-space:nowrap; }
+    .history-code-result { min-height:18px; max-width:116px; color:var(--muted); font-size:12px; line-height:1.35; overflow-wrap:anywhere; }
+    .history-code-result.ok { color:var(--ok); cursor:pointer; font-size:14px; font-weight:700; }
+    .history-code-result.err { color:var(--danger); }
     .section-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
     table.copy-table td[data-copy] { cursor: copy; user-select: none; }
-    table.copy-table td[data-copy]:hover { background: rgba(107, 140, 255, 0.16); }
+    table.copy-table td[data-copy]:hover { background:var(--copy-hover-bg); }
+    .theme-switch { position:relative; display:inline-flex; width:52px; height:28px; flex:0 0 52px; cursor:pointer; }
+    .theme-switch input { position:absolute; width:1px; height:1px; margin:0; padding:0; opacity:0; }
+    .theme-switch-track { position:relative; display:block; width:52px; height:28px; border:1px solid var(--border); border-radius:14px; background:var(--field-bg); box-sizing:border-box; }
+    .theme-switch-icon { position:absolute; top:5px; width:16px; height:16px; color:var(--muted); font-size:14px; line-height:16px; text-align:center; }
+    .theme-switch-sun { left:5px; }
+    .theme-switch-moon { right:5px; }
+    .theme-switch-thumb { position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--primary); box-shadow:0 2px 5px rgba(0,0,0,.25); transition:transform .2s ease; }
+    .theme-switch input:checked + .theme-switch-track .theme-switch-thumb { transform:translateX(24px); }
+    .theme-switch input:focus-visible + .theme-switch-track { outline:2px solid var(--primary); outline-offset:2px; }
+    @media (max-width:640px) {
+      .wrap { margin:18px auto; padding-left:12px; padding-right:12px; }
+      .topbar { align-items:flex-start; flex-wrap:wrap; gap:10px; }
+      .topbar-actions { width:100%; justify-content:flex-end; gap:8px; }
+    }
     #copyToast {
       position: fixed;
       right: 16px;
@@ -70,9 +138,17 @@
         <div class="brand">Cloud Mail Console</div>
         <div class="sub">批量创建、验证码查询、历史管理（SQLite 持久化）</div>
       </div>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <span style="color:#aaa;font-size:13px;" id="currentUser"></span>
-        <a href="/logout" style="color:#f88;text-decoration:none;font-size:13px;border:1px solid #5a3a3a;padding:5px 14px;border-radius:6px;" onmouseover="this.style.background='#3a1a1a'" onmouseout="this.style.background='transparent'">退出登录</a>
+      <div class="topbar-actions">
+        <label class="theme-switch" id="themeSwitch" title="切换到明亮模式">
+          <input id="themeToggle" type="checkbox" aria-label="切换到明亮模式" onchange="toggleTheme(this.checked)" />
+          <span class="theme-switch-track" aria-hidden="true">
+            <span class="theme-switch-icon theme-switch-sun">&#9728;</span>
+            <span class="theme-switch-icon theme-switch-moon">&#9790;</span>
+            <span class="theme-switch-thumb"></span>
+          </span>
+        </label>
+        <span class="current-user" id="currentUser"></span>
+        <a href="/logout" class="logout-link">退出登录</a>
       </div>
     </div>
 
@@ -187,19 +263,20 @@
         <table id="historyTable" class="copy-table" style="display:none; margin-top:10px;">
           <thead>
             <tr>
-              <th><input type="checkbox" id="historyCheckAll" onclick="toggleAllHistoryChecks(this)" /></th>
-              <th>ID</th>
-              <th>邮箱</th>
-              <th>邮箱密码</th>
-              <th>应用密码</th>
-              <th>姓名</th>
-              <th>年龄</th>
-              <th>生日</th>
-              <th>状态</th>
-              <th>平台</th>
-              <th>使用时间</th>
-              <th>创建时间</th>
-              <th>操作</th>
+              <th class="history-select-col"><input type="checkbox" id="historyCheckAll" onclick="toggleAllHistoryChecks(this)" /></th>
+              <th class="history-id-col">ID</th>
+              <th class="history-email-col">邮箱</th>
+              <th class="history-password-col">邮箱密码</th>
+              <th class="history-app-password-col">应用密码</th>
+              <th class="history-code-col">验证码</th>
+              <th class="history-name-col">姓名</th>
+              <th class="history-age-col">年龄</th>
+              <th class="history-birthday-col">生日</th>
+              <th class="history-status-col">状态</th>
+              <th class="history-platform-col">平台</th>
+              <th class="history-time-col">使用时间</th>
+              <th class="history-time-col">创建时间</th>
+              <th class="history-action-col">操作</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -441,6 +518,16 @@ function escapeAttr(value) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function splitEmailForDisplay(value) {
+  const email = String(value || '').trim();
+  const separator = email.indexOf('@');
+  if (separator <= 0) return { prefix: email, domain: '' };
+  return {
+    prefix: email.slice(0, separator),
+    domain: email.slice(separator),
+  };
 }
 
 function newMailProfile() {
@@ -956,6 +1043,103 @@ async function bulkDeleteAccounts() {
   }
 }
 
+function resolveHistoryProfileId(email, storedProfileId) {
+  const stored = String(storedProfileId || '').trim();
+  if (stored) return stored;
+
+  const domain = String(email || '').split('@').pop().toLowerCase();
+  let matchedProfileId = '';
+  let matchedSuffixLength = -1;
+  mailProfiles.forEach((profile) => {
+    (profile.domain_suffix_options || []).forEach((suffix) => {
+      const normalized = String(suffix || '').toLowerCase().replace(/^\.+/, '');
+      const matches = normalized && (domain === normalized || domain.endsWith(`.${normalized}`));
+      if (matches && normalized.length > matchedSuffixLength) {
+        matchedProfileId = profile.id;
+        matchedSuffixLength = normalized.length;
+      }
+    });
+  });
+  return matchedProfileId || activeMailProfileId || '';
+}
+
+function updateHistoryRowUsage(row, email, used) {
+  if (used) {
+    currentInUseEmail = email;
+  } else if (currentInUseEmail && currentInUseEmail.toLowerCase() === String(email).toLowerCase()) {
+    currentInUseEmail = '';
+  }
+
+  if (!row) return;
+  row.classList.toggle('in-use-row', used);
+
+  const statusText = used ? '正在使用' : '未使用';
+  const statusCell = row.querySelector('[data-role="account-status"]');
+  if (statusCell) {
+    statusCell.textContent = statusText;
+    statusCell.setAttribute('data-copy', statusText);
+  }
+
+  const actionButton = row.querySelector('.history-action-col button');
+  if (actionButton) {
+    actionButton.dataset.email = email;
+    actionButton.dataset.used = used ? '1' : '0';
+    actionButton.className = used ? 'btn-secondary' : 'btn-warning';
+    actionButton.textContent = used ? '改为未使用' : '标记正在使用';
+  }
+}
+
+function toggleHistoryUsed(button) {
+  const email = String(button.dataset.email || '').trim();
+  const isUsed = button.dataset.used === '1';
+  if (email) setUsed(email, !isUsed);
+}
+
+async function quickQueryCode(button) {
+  const email = String(button.dataset.email || '').trim();
+  const profileId = resolveHistoryProfileId(email, button.dataset.profileId || '');
+  const stack = button.closest('.history-code-stack');
+  const result = stack?.querySelector('.history-code-result');
+  const row = button.closest('tr');
+
+  if (!email || !result) return;
+
+  button.disabled = true;
+  result.className = 'history-code-result';
+  result.textContent = '查询中...';
+  result.title = '';
+  result.onclick = null;
+
+  try {
+    const res = await fetch('/api/query-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, platform: '', profile_id: profileId })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '查询失败');
+    }
+
+    if (data.code) {
+      result.className = 'history-code-result ok';
+      result.textContent = data.code;
+      result.title = '点击复制验证码';
+      result.onclick = () => copyText(data.code);
+      updateHistoryRowUsage(row, email, true);
+      loadQueryHistory(1);
+    } else {
+      result.textContent = '暂未查到';
+      updateHistoryRowUsage(row, email, false);
+    }
+  } catch (e) {
+    result.className = 'history-code-result err';
+    result.textContent = e.message || '查询失败';
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadHistory(page) {
   const pageSize = Number(document.getElementById('historyPageSize').value || 20);
   const emailQuery = String(document.getElementById('historyEmailQuery').value || '').trim();
@@ -990,23 +1174,45 @@ async function loadHistory(page) {
     (data.items || []).forEach((r) => {
       const tr = document.createElement('tr');
       const isInUse = !!r.used || (currentInUseEmail && String(r.email || '').toLowerCase() === currentInUseEmail.toLowerCase());
+      const email = String(r.email || '');
+      const emailParts = splitEmailForDisplay(email);
+      const id = escapeAttr(r.id || '');
+      const password = escapeAttr(r.password || '');
+      const appPassword = escapeAttr(r.app_password || '');
+      const name = escapeAttr(r.name || '');
+      const age = escapeAttr(r.age || '');
+      const birthday = escapeAttr(r.birthday || '');
+      const platforms = escapeAttr(r.platforms || '');
+      const usedAt = escapeAttr(r.used_at || '');
+      const createdAt = escapeAttr(r.created_at || '');
       if (isInUse) tr.classList.add('in-use-row');
 
       tr.innerHTML = `
-        <td><input class="history-row-check" type="checkbox" value="${r.id || ''}" /></td>
-        <td data-copy="${r.id || ''}">${r.id || ''}</td>
-        <td data-copy="${r.email || ''}">${r.email || ''}</td>
-        <td data-copy="${r.password || ''}">${r.password || ''}</td>
-        <td data-copy="${r.app_password || ''}">${r.app_password || ''}</td>
-        <td data-copy="${r.name || ''}">${r.name || ''}</td>
-        <td data-copy="${r.age || ''}">${r.age || ''}</td>
-        <td data-copy="${r.birthday || ''}">${r.birthday || ''}</td>
-        <td data-copy="${isInUse ? '正在使用' : '未使用'}">${isInUse ? '正在使用' : '未使用'}</td>
-        <td data-copy="${r.platforms || ''}">${r.platforms || ''}</td>
-        <td data-copy="${r.used_at || ''}">${r.used_at || ''}</td>
-        <td data-copy="${r.created_at || ''}">${r.created_at || ''}</td>
-        <td>
-          <button class="${isInUse ? 'btn-secondary' : 'btn-warning'}" onclick="setUsed('${(r.email || '').replace(/'/g, "\\'")}', ${isInUse ? 'false' : 'true'})">
+        <td class="history-select-col"><input class="history-row-check" type="checkbox" value="${id}" /></td>
+        <td class="history-id-col" data-copy="${id}">${id}</td>
+        <td class="history-email-col" data-copy="${escapeAttr(email)}" title="${escapeAttr(email)}">
+          <span class="history-email-value">
+            <span class="history-email-prefix">${escapeAttr(emailParts.prefix)}</span>
+            <span class="history-email-domain">${escapeAttr(emailParts.domain)}</span>
+          </span>
+        </td>
+        <td class="history-password-col" data-copy="${password}">${password}</td>
+        <td class="history-app-password-col" data-copy="${appPassword}">${appPassword}</td>
+        <td class="history-code-col">
+          <div class="history-code-stack">
+            <button class="btn-secondary history-code-btn" data-email="${escapeAttr(r.email || '')}" data-profile-id="${escapeAttr(r.profile_id || '')}" onclick="quickQueryCode(this)">查验证码</button>
+            <div class="history-code-result"></div>
+          </div>
+        </td>
+        <td class="history-name-col" data-copy="${name}">${name}</td>
+        <td class="history-age-col" data-copy="${age}">${age}</td>
+        <td class="history-birthday-col" data-copy="${birthday}">${birthday}</td>
+        <td class="history-status-col" data-role="account-status" data-copy="${isInUse ? '正在使用' : '未使用'}">${isInUse ? '正在使用' : '未使用'}</td>
+        <td class="history-platform-col" data-copy="${platforms}">${platforms}</td>
+        <td class="history-time-col" data-copy="${usedAt}">${usedAt}</td>
+        <td class="history-time-col" data-copy="${createdAt}">${createdAt}</td>
+        <td class="history-action-col">
+          <button class="${isInUse ? 'btn-secondary' : 'btn-warning'}" data-email="${escapeAttr(email)}" data-used="${isInUse ? '1' : '0'}" onclick="toggleHistoryUsed(this)">
             ${isInUse ? '改为未使用' : '标记正在使用'}
           </button>
         </td>
@@ -1348,6 +1554,33 @@ async function changePassword() {
   }
 }
 
+const THEME_STORAGE_KEY = 'cloudmailmanual-theme';
+
+function applyTheme(theme, persist = true) {
+  const normalized = theme === 'light' ? 'light' : 'dark';
+  const useLightTheme = normalized === 'light';
+  document.documentElement.dataset.theme = normalized;
+
+  const toggle = document.getElementById('themeToggle');
+  const switchLabel = document.getElementById('themeSwitch');
+  const nextThemeLabel = useLightTheme ? '切换到黑暗模式' : '切换到明亮模式';
+  if (toggle) {
+    toggle.checked = useLightTheme;
+    toggle.setAttribute('aria-label', nextThemeLabel);
+  }
+  if (switchLabel) switchLabel.title = nextThemeLabel;
+
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, normalized);
+    } catch (_) {}
+  }
+}
+
+function toggleTheme(useLightTheme) {
+  applyTheme(useLightTheme ? 'light' : 'dark');
+}
+
 function switchTab(tabName) {
   const map = {
     register: 'tab-register',
@@ -1370,6 +1603,7 @@ function switchTab(tabName) {
 }
 
 window.addEventListener('load', () => {
+  applyTheme(document.documentElement.dataset.theme, false);
   fetch('/api/me').then(r=>r.json()).then(d=>{if(d.ok)document.getElementById('currentUser').textContent=d.username;});
   loadMaxLimit();
   loadMailProfiles();

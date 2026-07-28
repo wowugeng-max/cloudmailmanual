@@ -25,7 +25,7 @@ def get_accounts_history(page: int, page_size: int, email_query: str = "") -> Di
         total = conn.execute(f"SELECT COUNT(1) FROM accounts {where_sql}", params).fetchone()[0]
         rows = conn.execute(
             f"""
-            SELECT id, email, password, app_password, name, age, birthday, created_at,
+            SELECT id, email, password, app_password, profile_id, name, age, birthday, created_at,
                    used, used_at, platforms
             FROM accounts
             {where_sql}
@@ -150,14 +150,15 @@ def save_accounts(rows: List[Dict[str, str | int]]) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.executemany(
             """
-            INSERT INTO accounts (email, password, app_password, name, age, birthday, created_at, used, used_at, platforms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, '')
+            INSERT INTO accounts (email, password, app_password, profile_id, name, age, birthday, created_at, used, used_at, platforms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, '')
             """,
             [
                 (
                     str(r.get("email", "")),
                     str(r.get("password", "")),
                     str(r.get("app_password", "")),
+                    str(r.get("profile_id", "")),
                     str(r.get("name", "")),
                     int(r.get("age", 0) or 0),
                     str(r.get("birthday", "")),
@@ -199,6 +200,7 @@ def save_accounts_with_meta(rows: List[Dict[str, object]]) -> Tuple[int, int]:
 
             password = str(r.get("password", "") or "").strip()
             app_password = str(r.get("app_password", "") or "").strip()
+            profile_id = str(r.get("profile_id", "") or "").strip()
             name = str(r.get("name", "") or "").strip() or "Unknown"
             age = _to_int(r.get("age", 0), 0)
             birthday = str(r.get("birthday", "") or "").strip() or "1970-01-01"
@@ -209,10 +211,10 @@ def save_accounts_with_meta(rows: List[Dict[str, object]]) -> Tuple[int, int]:
 
             conn.execute(
                 """
-                INSERT INTO accounts (email, password, app_password, name, age, birthday, created_at, used, used_at, platforms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO accounts (email, password, app_password, profile_id, name, age, birthday, created_at, used, used_at, platforms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (email, password, app_password, name, age, birthday, created_at, used, used_at, platforms),
+                (email, password, app_password, profile_id, name, age, birthday, created_at, used, used_at, platforms),
             )
             imported += 1
 
