@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any, Dict, List
 
 from ..config import CONFIG_PATH
+from .config_store import read_config, update_config
 
 LEGACY_MAIL_KEYS = {
     "cloud_mail_api_base",
@@ -18,18 +18,7 @@ LEGACY_MAIL_KEYS = {
 
 
 def _read_config() -> Dict[str, Any]:
-    if not CONFIG_PATH.exists():
-        return {}
-    with CONFIG_PATH.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data if isinstance(data, dict) else {}
-
-
-def _write_config(config: Dict[str, Any]) -> None:
-    CONFIG_PATH.write_text(
-        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    return read_config(CONFIG_PATH, tolerate_non_object=True)
 
 
 def _normalize_domain_list(value: Any) -> List[str]:
@@ -156,12 +145,13 @@ def save_mail_profiles_config(profiles: List[Dict[str, Any]], active_profile_id:
     if errors:
         raise ValueError("；".join(str(e) for e in errors))
 
-    config = _read_config()
-    for key in LEGACY_MAIL_KEYS:
-        config.pop(key, None)
-    config["mail_profiles"] = result["profiles"]
-    config["active_mail_profile_id"] = result["active_profile_id"]
-    _write_config(config)
+    def apply_update(config: Dict[str, Any]) -> None:
+        for key in LEGACY_MAIL_KEYS:
+            config.pop(key, None)
+        config["mail_profiles"] = result["profiles"]
+        config["active_mail_profile_id"] = result["active_profile_id"]
+
+    update_config(CONFIG_PATH, apply_update)
 
     return {
         "profiles": result["profiles"],

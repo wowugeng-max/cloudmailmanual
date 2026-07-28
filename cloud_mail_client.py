@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+import regex
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -42,6 +43,14 @@ PRESET_ORDER = (
     "digits_spaced_3_3",
     "digits_6",
 )
+
+CUSTOM_PATTERN_TIMEOUT_SECONDS = 0.05
+CUSTOM_EXTRACTION_BUDGET_SECONDS = 0.25
+VERIFICATION_QUERY_BUDGET_SECONDS = 2.0
+
+
+class VerificationRuleTimeoutError(ValueError):
+    pass
 
 
 def _load_config() -> Dict[str, Any]:
@@ -161,6 +170,7 @@ class CloudMailClient:
         *,
         allow_digits: bool = True,
         rules: Optional[Dict[str, object]] = None,
+        custom_pattern_deadline: Optional[float] = None,
     ) -> Optional[str]:
         if not content:
             return None
@@ -178,7 +188,11 @@ class CloudMailClient:
         )
         custom_patterns = selected.get("custom_patterns", [])
         pattern_specs = [
-            (None, str(item.get("pattern", "")))
+            (
+                None,
+                str(item.get("name", "") or "未命名规则"),
+                str(item.get("pattern", "")),
+            )
             for item in custom_patterns
             if isinstance(item, dict) and item.get("pattern")
         ]
@@ -188,25 +202,47 @@ class CloudMailClient:
         for preset_id in PRESET_ORDER:
             if preset_id in enabled_presets:
                 pattern_specs.extend(
-                    (preset_id, pattern) for pattern in PRESET_PATTERNS[preset_id]
+                    (preset_id, "", pattern) for pattern in PRESET_PATTERNS[preset_id]
                 )
 
-        for preset_id, pattern in pattern_specs:
-            for match in re.finditer(pattern, normalized, re.IGNORECASE):
-                code = re.sub(r"\s+", "", str(match.group(1) or ""))
-                if not code or code == "177010":
-                    continue
-                if preset_id == "alnum_6" and not re.fullmatch(
-                    r"(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6}", code
-                ):
-                    continue
-                if preset_id == "alnum_hyphen_3_3" and not re.fullmatch(
-                    r"[A-Z0-9]{3}-[A-Z0-9]{3}", code
-                ):
-                    continue
-                if not allow_digits and code.replace("-", "").isdigit():
-                    continue
-                return code
+        custom_deadline = custom_pattern_deadline
+        if custom_deadline is None:
+            custom_deadline = time.monotonic() + CUSTOM_EXTRACTION_BUDGET_SECONDS
+
+        for preset_id, rule_name, pattern in pattern_specs:
+            try:
+                if preset_id is None:
+                    remaining = custom_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    matches = regex.finditer(
+                        pattern,
+                        normalized,
+                        regex.IGNORECASE,
+                        timeout=min(CUSTOM_PATTERN_TIMEOUT_SECONDS, remaining),
+                    )
+                else:
+                    matches = re.finditer(pattern, normalized, re.IGNORECASE)
+
+                for match in matches:
+                    code = re.sub(r"\s+", "", str(match.group(1) or ""))
+                    if not code or code == "177010":
+                        continue
+                    if preset_id == "alnum_6" and not re.fullmatch(
+                        r"(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6}", code
+                    ):
+                        continue
+                    if preset_id == "alnum_hyphen_3_3" and not re.fullmatch(
+                        r"[A-Z0-9]{3}-[A-Z0-9]{3}", code
+                    ):
+                        continue
+                    if not allow_digits and code.replace("-", "").isdigit():
+                        continue
+                    return code
+            except TimeoutError as exc:
+                raise VerificationRuleTimeoutError(
+                    f"自定义验证码规则匹配超时: {rule_name}"
+                ) from exc
 
         return None
 
@@ -219,6 +255,7 @@ class CloudMailClient:
         """
         rules = get_verification_code_rules()
         rows = self._email_list(to_email=email, size=50)
+        custom_pattern_deadline = time.monotonic() + VERIFICATION_QUERY_BUDGET_SECONDS
         for row in rows:
             subject = str(row.get("subject") or "")
             text = str(row.get("text") or "")
@@ -226,29 +263,47 @@ class CloudMailClient:
 
             # 先查主题：先不允许纯数字，再允许纯数字
             code = self.extract_verification_code(
-                subject, allow_digits=False, rules=rules
+                subject,
+                allow_digits=False,
+                rules=rules,
+                custom_pattern_deadline=custom_pattern_deadline,
             )
             if not code:
                 code = self.extract_verification_code(
-                    subject, allow_digits=True, rules=rules
+                    subject,
+                    allow_digits=True,
+                    rules=rules,
+                    custom_pattern_deadline=custom_pattern_deadline,
                 )
 
             # 主题没有再查正文（同样先偏好非纯数字）
             if not code:
                 code = self.extract_verification_code(
-                    text, allow_digits=False, rules=rules
+                    text,
+                    allow_digits=False,
+                    rules=rules,
+                    custom_pattern_deadline=custom_pattern_deadline,
                 )
             if not code:
                 code = self.extract_verification_code(
-                    html, allow_digits=False, rules=rules
+                    html,
+                    allow_digits=False,
+                    rules=rules,
+                    custom_pattern_deadline=custom_pattern_deadline,
                 )
             if not code:
                 code = self.extract_verification_code(
-                    text, allow_digits=True, rules=rules
+                    text,
+                    allow_digits=True,
+                    rules=rules,
+                    custom_pattern_deadline=custom_pattern_deadline,
                 )
             if not code:
                 code = self.extract_verification_code(
-                    html, allow_digits=True, rules=rules
+                    html,
+                    allow_digits=True,
+                    rules=rules,
+                    custom_pattern_deadline=custom_pattern_deadline,
                 )
 
             if code:

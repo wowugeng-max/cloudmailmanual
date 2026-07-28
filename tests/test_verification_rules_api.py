@@ -239,6 +239,22 @@ class VerificationRulesApiTest(unittest.TestCase):
             {"ok": False, "error": "测试内容最多 100000 个字符"},
         )
 
+    def test_test_endpoint_reports_custom_pattern_timeout(self):
+        self.login()
+
+        response = self.client.post(
+            "/api/settings/verification-code-rules/test",
+            json={
+                "content": "a" * 99999 + "X",
+                "enabled_presets": [],
+                "custom_patterns_text": "Slow :: ((a+)+$)",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["ok"], False)
+        self.assertIn("自定义验证码规则匹配超时: Slow", response.get_json()["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

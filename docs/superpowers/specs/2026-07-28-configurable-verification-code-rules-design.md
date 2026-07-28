@@ -66,7 +66,8 @@ Requirements:
 
 - The separator is the first `::` in the line.
 - Both name and expression are required.
-- Each expression must compile with Python `re.IGNORECASE`.
+- Each expression must compile with the Python-compatible `regex` engine and
+  `IGNORECASE`.
 - Each expression must contain at least one capturing group.
 - The first captured group is the verification code.
 - Whitespace is removed from the captured result; punctuation such as hyphens is preserved.
@@ -107,6 +108,11 @@ Create a focused `verification_rules` repository responsible for:
 - Compiling and validating custom regular expressions.
 - Saving only the global rule section while preserving the rest of `config.json`.
 
+Mail-profile and verification-rule saves use one shared configuration store. The
+store serializes each complete read-modify-write transaction and atomically
+replaces `config.json`, preventing concurrent settings requests from losing an
+otherwise successful update.
+
 Add authenticated endpoints:
 
 - `GET /api/settings/verification-code-rules`
@@ -137,6 +143,9 @@ Loading the mail settings tab also loads the rule set. Saving updates only the r
 - The tester has no mailbox, account-status, or query-history side effects.
 - Test content is limited to 100,000 characters, and extraction content is limited to 200,000 normalized characters.
 - Configuration count and expression-length limits reduce accidental expensive regular expressions; only authenticated administrators can edit rules.
+- Custom expressions run with a per-pattern timeout, an extraction budget, and a
+  query-wide budget. A timeout stops the query with a rule-specific error instead
+  of blocking the Flask worker.
 - UI output uses `textContent`; configured names and patterns are never inserted as raw HTML.
 - Unknown preset IDs are ignored when reading legacy or manually edited files and rejected when saving through the API.
 

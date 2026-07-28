@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -206,6 +208,20 @@ class VerificationRulesRepositoryTest(unittest.TestCase):
             "八位数字",
         )
 
+    def test_save_rejects_non_object_root_without_overwriting(self):
+        self.write_config([{"recoverable": "value"}])
+        original = self.config_path.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, "根配置必须是对象"):
+            verification_rules.save_verification_code_rules(
+                {
+                    "enabled_presets": ["digits_6"],
+                    "custom_patterns_text": "",
+                }
+            )
+
+        self.assertEqual(self.config_path.read_bytes(), original)
+
     def test_invalid_pattern_reports_source_line(self):
         with self.assertRaisesRegex(ValueError, "第 2 行.*正则表达式无效"):
             verification_rules.validate_verification_code_rules(
@@ -388,6 +404,57 @@ class ConfigurableExtractionTest(unittest.TestCase):
                 rules=rules,
             ),
             "331781",
+        )
+
+    def test_custom_pattern_match_has_time_budget(self):
+        script = r"""
+from cloud_mail_client import CloudMailClient
+
+rules = {
+    "enabled_presets": [],
+    "custom_patterns": [{"name": "Slow", "pattern": "((a+)+$)"}],
+}
+try:
+    CloudMailClient.extract_verification_code("a" * 100000 + "X", rules=rules)
+except ValueError as exc:
+    if "匹配超时" not in str(exc):
+        raise
+else:
+    raise SystemExit("expected the unsafe custom pattern to time out")
+"""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+                timeout=1,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail("自定义正则匹配超过 1 秒，未受时间预算保护")
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_labeled_code_preset_extracts_verification_code(self):
+        rules = {"enabled_presets": ["labeled_code"], "custom_patterns": []}
+
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "Verification code: 123456",
+                rules=rules,
+            ),
+            "123456",
+        )
+
+    def test_disabled_labeled_code_preset_does_not_match(self):
+        rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
+
+        self.assertIsNone(
+            CloudMailClient.extract_verification_code(
+                "Verification code: 123456",
+                rules=rules,
+            )
         )
 
     def test_disabled_preset_does_not_match(self):

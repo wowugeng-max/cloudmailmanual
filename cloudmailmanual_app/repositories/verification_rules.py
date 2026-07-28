@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-import re
 from copy import deepcopy
 from typing import Any, Dict, List
 
+import regex
+
 from ..config import CONFIG_PATH
+from .config_store import read_config, update_config
 
 MAX_CUSTOM_PATTERNS = 50
 MAX_PATTERN_LENGTH = 500
@@ -32,18 +34,7 @@ PRESET_IDS = tuple(item["id"] for item in PRESET_METADATA)
 
 
 def _read_config() -> Dict[str, Any]:
-    if not CONFIG_PATH.exists():
-        return {}
-    with CONFIG_PATH.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
-    return data if isinstance(data, dict) else {}
-
-
-def _write_config(config: Dict[str, Any]) -> None:
-    CONFIG_PATH.write_text(
-        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    return read_config(CONFIG_PATH, tolerate_non_object=True)
 
 
 def _patterns_to_text(patterns: List[Dict[str, str]]) -> str:
@@ -71,8 +62,8 @@ def _parse_custom_patterns(text: str) -> List[Dict[str, str]]:
             )
 
         try:
-            compiled = re.compile(pattern, re.IGNORECASE)
-        except (re.error, OverflowError) as exc:
+            compiled = regex.compile(pattern, regex.IGNORECASE)
+        except (regex.error, OverflowError) as exc:
             raise ValueError(f"第 {line_number} 行正则表达式无效: {exc}") from exc
         if compiled.groups < 1:
             raise ValueError(f"第 {line_number} 行必须包含至少一个捕获组")
@@ -173,10 +164,12 @@ def get_verification_code_rules() -> Dict[str, object]:
 
 def save_verification_code_rules(payload: Dict[str, Any]) -> Dict[str, object]:
     normalized_rules = validate_verification_code_rules(payload)
-    config = _read_config()
-    config["verification_code_rules"] = {
-        "enabled_presets": normalized_rules["enabled_presets"],
-        "custom_patterns": normalized_rules["custom_patterns"],
-    }
-    _write_config(config)
+
+    def apply_update(config: Dict[str, Any]) -> None:
+        config["verification_code_rules"] = {
+            "enabled_presets": normalized_rules["enabled_presets"],
+            "custom_patterns": normalized_rules["custom_patterns"],
+        }
+
+    update_config(CONFIG_PATH, apply_update)
     return deepcopy(normalized_rules)
