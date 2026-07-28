@@ -16,5 +16,15 @@
     }
   ],
   "active_mail_profile_id": "default",
-  "web_port": 5000
+  "web_port": 5000,
+  "verification_code_rules": {
+    "enabled_presets": [
+      "digits_6",
+      "digits_spaced_3_3",
+      "alnum_6",
+      "alnum_hyphen_3_3",
+      "labeled_code"
+    ],
+    "custom_patterns": []
+  }
 }
