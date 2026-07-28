@@ -137,6 +137,25 @@ class VerificationRulesRepositoryTest(unittest.TestCase):
                 }
             )
 
+    def test_persisted_custom_pattern_name_and_pattern_must_be_strings(self):
+        invalid_patterns = [
+            {"name": 123, "pattern": "(\\d{6})"},
+            {"name": "Digits", "pattern": {"source": "(\\d{6})"}},
+        ]
+
+        for custom_pattern in invalid_patterns:
+            with self.subTest(custom_pattern=custom_pattern):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "custom_patterns 第 1 项.*名称和正则表达式必须是字符串",
+                ):
+                    verification_rules.validate_verification_code_rules(
+                        {
+                            "enabled_presets": ["digits_6"],
+                            "custom_patterns": [custom_pattern],
+                        }
+                    )
+
     def test_save_preserves_unrelated_config_and_mail_profiles(self):
         original = {
             "web_port": 8080,

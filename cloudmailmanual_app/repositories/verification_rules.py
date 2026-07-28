@@ -118,10 +118,16 @@ def validate_verification_code_rules(payload: Dict[str, Any]) -> Dict[str, objec
         for index, item in enumerate(raw_custom_patterns, start=1):
             if not isinstance(item, dict):
                 raise ValueError(f"custom_patterns 第 {index} 项必须是对象")
+            name = item.get("name", "")
+            pattern = item.get("pattern", "")
+            if not isinstance(name, str) or not isinstance(pattern, str):
+                raise ValueError(
+                    f"custom_patterns 第 {index} 项名称和正则表达式必须是字符串"
+                )
             persisted_patterns.append(
                 {
-                    "name": str(item.get("name", "") or ""),
-                    "pattern": str(item.get("pattern", "") or ""),
+                    "name": name,
+                    "pattern": pattern,
                 }
             )
         custom_patterns = _parse_custom_patterns(_patterns_to_text(persisted_patterns))

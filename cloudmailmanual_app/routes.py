@@ -123,19 +123,33 @@ def register_routes(app):
     @app.post("/api/settings/verification-code-rules")
     @login_required
     def api_save_verification_code_rules():
-        payload = request.get_json(silent=True) or {}
+        payload = request.get_json(silent=True)
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "请求体必须是对象"}), 400
+
         try:
-            rules = save_verification_code_rules(payload)
-            return jsonify({"ok": True, **rules})
+            validate_verification_code_rules(payload)
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
+
+        rules = save_verification_code_rules(payload)
+        return jsonify({"ok": True, **rules})
 
 
     @app.post("/api/settings/verification-code-rules/test")
     @login_required
     def api_test_verification_code_rules():
-        payload = request.get_json(silent=True) or {}
-        content = str(payload.get("content", "") or "")
+        payload = request.get_json(silent=True)
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "请求体必须是对象"}), 400
+
+        content = payload.get("content", "")
+        if not isinstance(content, str):
+            return jsonify({"ok": False, "error": "content 必须是字符串"}), 400
         if len(content) > 100000:
             return jsonify({"ok": False, "error": "测试内容最多 100000 个字符"}), 400
 
