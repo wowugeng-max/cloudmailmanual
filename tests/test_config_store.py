@@ -93,6 +93,29 @@ class SharedConfigStoreTest(unittest.TestCase):
             ["digits_6"],
         )
 
+    def test_atomic_write_failures_preserve_original_and_clean_temporary_file(self):
+        original = self.config_path.read_bytes()
+        failures = (
+            (config_store.json, "dump"),
+            (config_store.os, "fsync"),
+            (config_store.os, "replace"),
+        )
+
+        for owner, attribute in failures:
+            with self.subTest(attribute=attribute):
+                with patch.object(owner, attribute, side_effect=OSError("disk failure")):
+                    with self.assertRaisesRegex(OSError, "disk failure"):
+                        config_store.update_config(
+                            self.config_path,
+                            lambda config: config.update({"new_value": attribute}),
+                        )
+
+                self.assertEqual(self.config_path.read_bytes(), original)
+                self.assertEqual(
+                    list(self.config_path.parent.glob(f".{self.config_path.name}.*.tmp")),
+                    [],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

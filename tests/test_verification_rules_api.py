@@ -193,6 +193,27 @@ class VerificationRulesApiTest(unittest.TestCase):
         self.assertEqual(data["custom_patterns_text"], r"Eight :: token: (\d{8})")
         self.assertIn('"web_port": 8080', self.config_path.read_text(encoding="utf-8"))
 
+    def test_save_returns_json_500_when_atomic_write_fails(self):
+        self.login()
+        original_config = self.config_path.read_bytes()
+
+        with patch.object(
+            routes,
+            "save_verification_code_rules",
+            side_effect=OSError("disk full"),
+        ):
+            response = self.client.post(
+                "/api/settings/verification-code-rules",
+                json={
+                    "enabled_presets": ["digits_6"],
+                    "custom_patterns_text": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json(), {"ok": False, "error": "disk full"})
+        self.assertEqual(self.config_path.read_bytes(), original_config)
+
     def test_test_endpoint_uses_unsaved_rules_without_side_effects(self):
         self.login()
         original_config = self.config_path.read_bytes()

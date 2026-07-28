@@ -205,9 +205,10 @@ class CloudMailClient:
                     (preset_id, "", pattern) for pattern in PRESET_PATTERNS[preset_id]
                 )
 
-        custom_deadline = custom_pattern_deadline
-        if custom_deadline is None:
-            custom_deadline = time.monotonic() + CUSTOM_EXTRACTION_BUDGET_SECONDS
+        extraction_deadline = time.monotonic() + CUSTOM_EXTRACTION_BUDGET_SECONDS
+        custom_deadline = extraction_deadline
+        if custom_pattern_deadline is not None:
+            custom_deadline = min(custom_pattern_deadline, extraction_deadline)
 
         for preset_id, rule_name, pattern in pattern_specs:
             try:

@@ -1,9 +1,11 @@
 import json
+import itertools
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cloud_mail_client import CloudMailClient
 from cloudmailmanual_app.repositories import verification_rules
@@ -408,6 +410,8 @@ class ConfigurableExtractionTest(unittest.TestCase):
 
     def test_custom_pattern_match_has_time_budget(self):
         script = r"""
+import time
+
 from cloud_mail_client import CloudMailClient
 
 rules = {
@@ -415,10 +419,13 @@ rules = {
     "custom_patterns": [{"name": "Slow", "pattern": "((a+)+$)"}],
 }
 try:
+    started = time.monotonic()
     CloudMailClient.extract_verification_code("a" * 100000 + "X", rules=rules)
 except ValueError as exc:
     if "匹配超时" not in str(exc):
         raise
+    if time.monotonic() - started > 0.75:
+        raise SystemExit("custom pattern timeout exceeded its runtime budget")
 else:
     raise SystemExit("expected the unsafe custom pattern to time out")
 """
@@ -428,13 +435,37 @@ else:
                 cwd=Path(__file__).resolve().parents[1],
                 text=True,
                 capture_output=True,
-                timeout=1,
+                timeout=5,
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            self.fail("自定义正则匹配超过 1 秒，未受时间预算保护")
+            self.fail("自定义正则匹配超过 5 秒，未受时间预算保护")
 
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_query_deadline_does_not_bypass_single_extraction_budget(self):
+        clock_ticks = itertools.count()
+        rules = {
+            "enabled_presets": [],
+            "custom_patterns": [
+                {"name": f"Rule {index}", "pattern": r"token: (\d{6})"}
+                for index in range(10)
+            ],
+        }
+
+        with (
+            patch(
+                "cloud_mail_client.time.monotonic",
+                side_effect=lambda: 100.0 + next(clock_ticks) * 0.06,
+            ),
+            patch("cloud_mail_client.regex.finditer", return_value=[]),
+        ):
+            with self.assertRaisesRegex(ValueError, "匹配超时"):
+                CloudMailClient.extract_verification_code(
+                    "no code",
+                    rules=rules,
+                    custom_pattern_deadline=1000.0,
+                )
 
     def test_labeled_code_preset_extracts_verification_code(self):
         rules = {"enabled_presets": ["labeled_code"], "custom_patterns": []}

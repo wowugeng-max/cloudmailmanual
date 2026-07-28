@@ -31,9 +31,9 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 echo [*] 检查关键依赖...
-call ".venv\Scripts\python.exe" -c "import flask, requests" >nul 2>&1
+call ".venv\Scripts\python.exe" -c "import flask, requests, regex" >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] 检测到缺少依赖（flask/requests）。
+  echo [ERROR] 检测到缺少依赖（flask/requests/regex）。
   echo [提示] 请先执行：
   echo        .venv\Scripts\python -m pip install -r requirements.txt
   echo.

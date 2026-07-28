@@ -36,6 +36,12 @@ class MacScriptsTest(unittest.TestCase):
         )
         self.assertIn("Cloud Mail", result.stdout)
 
+    def test_windows_launcher_checks_every_required_runtime_dependency(self):
+        script = (ROOT / "run_web.bat").read_text(encoding="utf-8")
+
+        self.assertIn('import flask, requests, regex', script)
+        self.assertIn('flask/requests/regex', script)
+
 
 if __name__ == "__main__":
     unittest.main()

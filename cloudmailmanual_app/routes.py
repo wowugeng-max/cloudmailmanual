@@ -134,7 +134,10 @@ def register_routes(app):
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
-        rules = save_verification_code_rules(payload)
+        try:
+            rules = save_verification_code_rules(payload)
+        except OSError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
         return jsonify({"ok": True, **rules})
 
 
