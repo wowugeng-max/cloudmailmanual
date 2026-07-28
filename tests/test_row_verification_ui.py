@@ -59,6 +59,40 @@ class RowVerificationUiTest(unittest.TestCase):
         self.assertIn("applyTheme", html)
         self.assertIn("cloudmailmanual-theme", html)
 
+    def test_mail_settings_exposes_verification_rule_editor(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+
+        for control_id in (
+            "verificationPresetOptions",
+            "verificationCustomPatterns",
+            "verificationRuleTestContent",
+            "testVerificationRulesBtn",
+            "saveVerificationRulesBtn",
+            "verificationRulesStatus",
+        ):
+            self.assertIn(f'id="{control_id}"', html)
+
+        for function_name in (
+            "loadVerificationRules",
+            "testVerificationRules",
+            "saveVerificationRules",
+        ):
+            self.assertIn(f"function {function_name}", html)
+
+        self.assertIn("loadVerificationRules();", html)
+        self.assertIn("fetch('/api/settings/verification-code-rules')", html)
+        self.assertIn("fetch('/api/settings/verification-code-rules/test'", html)
+
+        preset_renderer = html.split("function renderVerificationPresets", 1)[1].split(
+            "async function loadVerificationRules", 1
+        )[0]
+        self.assertIn("container.innerHTML = '';", preset_renderer)
+        self.assertIn("document.createElement('label')", preset_renderer)
+        self.assertIn("span.textContent = `${preset.label} (${preset.example})`;", preset_renderer)
+        self.assertNotIn("innerHTML = `", preset_renderer)
+
+        self.assertIn("验证码规则已保存，下次查询立即生效", html)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,20 @@
     th, td { border-bottom:1px solid var(--border); text-align:left; padding:9px 7px; }
     th { color:var(--table-head-text); font-weight:700; position:sticky; top:0; background:var(--table-head-bg); }
     .tools { margin-top:10px; overflow-x:auto; }
+    .verification-rule-settings { margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }
+    .verification-rule-settings h3 { margin:0 0 12px; color:var(--text); font-size:16px; }
+    #verificationPresetOptions { display:flex; flex-wrap:wrap; gap:10px 18px; max-width:900px; }
+    #verificationPresetOptions label { display:inline-flex; align-items:center; gap:7px; min-width:0; color:var(--text); }
+    #verificationPresetOptions input[type="checkbox"] { width:16px; height:16px; flex:0 0 16px; margin:0; padding:0; }
+    .verification-rule-field { margin-top:14px; max-width:900px; }
+    .verification-rule-field > label { display:block; margin-bottom:6px; color:var(--text); font-weight:600; }
+    .verification-rule-field textarea {
+      width:100%; max-width:900px; padding:9px 11px; box-sizing:border-box; resize:vertical;
+      border:1px solid var(--border); border-radius:6px; background:var(--field-bg); color:var(--text);
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace; line-height:1.45;
+    }
+    .verification-rule-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+    .verification-rule-actions button { border-radius:8px; }
     #historyTable { min-width:1480px; table-layout:auto; }
     #historyTable th, #historyTable td { vertical-align:middle; }
     #historyTable .history-select-col { width:36px; min-width:36px; max-width:36px; padding-left:4px; padding-right:4px; text-align:center; }
@@ -441,6 +455,23 @@
             <tbody></tbody>
           </table>
         </div>
+        <section class="verification-rule-settings" aria-labelledby="verificationRuleHeading">
+          <h3 id="verificationRuleHeading">验证码格式</h3>
+          <div id="verificationPresetOptions"></div>
+          <div class="verification-rule-field">
+            <label for="verificationCustomPatterns">自定义格式</label>
+            <textarea id="verificationCustomPatterns" rows="7" spellcheck="false"></textarea>
+          </div>
+          <div class="verification-rule-field">
+            <label for="verificationRuleTestContent">测试内容</label>
+            <textarea id="verificationRuleTestContent" rows="6"></textarea>
+          </div>
+          <div class="verification-rule-actions">
+            <button id="testVerificationRulesBtn" class="btn-secondary" onclick="testVerificationRules()">测试规则</button>
+            <button id="saveVerificationRulesBtn" onclick="saveVerificationRules()">保存验证码规则</button>
+          </div>
+          <div id="verificationRulesStatus" class="status"></div>
+        </section>
       </div>
     </div>
 
@@ -478,6 +509,7 @@ let queryHistoryTotalPages = 1;
 let currentInUseEmail = '';
 let mailProfiles = [];
 let activeMailProfileId = '';
+let verificationPresetMetadata = [];
 
 async function loadMaxLimit() {
   try {
@@ -682,6 +714,126 @@ async function saveMailProfiles() {
   } catch (e) {
     status.className = 'status err';
     status.textContent = `失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function collectVerificationRules() {
+  return {
+    enabled_presets: Array.from(document.querySelectorAll('[data-verification-preset]:checked'))
+      .map((input) => input.value),
+    custom_patterns_text: String(document.getElementById('verificationCustomPatterns')?.value || ''),
+  };
+}
+
+function renderVerificationPresets(enabledPresets) {
+  const container = document.getElementById('verificationPresetOptions');
+  if (!container) return;
+  container.innerHTML = '';
+  const enabled = Array.isArray(enabledPresets) ? enabledPresets : [];
+
+  verificationPresetMetadata.forEach((preset) => {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    const span = document.createElement('span');
+
+    input.type = 'checkbox';
+    input.value = preset.id;
+    input.dataset.verificationPreset = '1';
+    input.checked = enabled.includes(preset.id);
+    span.textContent = `${preset.label} (${preset.example})`;
+
+    label.appendChild(input);
+    label.appendChild(span);
+    container.appendChild(label);
+  });
+}
+
+async function loadVerificationRules() {
+  const status = document.getElementById('verificationRulesStatus');
+  try {
+    const res = await fetch('/api/settings/verification-code-rules');
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '加载验证码规则失败');
+    }
+
+    verificationPresetMetadata = Array.isArray(data.available_presets) ? data.available_presets : [];
+    renderVerificationPresets(data.enabled_presets || []);
+    document.getElementById('verificationCustomPatterns').value = String(data.custom_patterns_text || '');
+    status.className = 'status';
+    status.textContent = '';
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `加载失败：${e.message || e}`;
+  }
+}
+
+async function testVerificationRules() {
+  const btn = document.getElementById('testVerificationRulesBtn');
+  const status = document.getElementById('verificationRulesStatus');
+  const payload = {
+    ...collectVerificationRules(),
+    content: String(document.getElementById('verificationRuleTestContent')?.value || ''),
+  };
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在测试...';
+
+  try {
+    const res = await fetch('/api/settings/verification-code-rules/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '测试失败');
+    }
+
+    if (data.code) {
+      status.className = 'status ok';
+      status.textContent = `提取结果：${data.code}`;
+    } else {
+      status.className = 'status';
+      status.textContent = '未提取到验证码';
+    }
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `测试失败：${e.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveVerificationRules() {
+  const btn = document.getElementById('saveVerificationRulesBtn');
+  const status = document.getElementById('verificationRulesStatus');
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '正在保存验证码规则...';
+
+  try {
+    const res = await fetch('/api/settings/verification-code-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectVerificationRules()),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || '保存失败');
+    }
+
+    renderVerificationPresets(data.enabled_presets || []);
+    document.getElementById('verificationCustomPatterns').value = String(data.custom_patterns_text || '');
+    status.className = 'status ok';
+    status.textContent = '验证码规则已保存，下次查询立即生效';
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = `保存失败：${e.message || e}`;
   } finally {
     btn.disabled = false;
   }
@@ -1607,6 +1759,7 @@ window.addEventListener('load', () => {
   fetch('/api/me').then(r=>r.json()).then(d=>{if(d.ok)document.getElementById('currentUser').textContent=d.username;});
   loadMaxLimit();
   loadMailProfiles();
+  loadVerificationRules();
   onDeleteModeChange();
   loadHistory(1);
   loadQueryHistory(1);
