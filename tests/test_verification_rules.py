@@ -89,6 +89,26 @@ class VerificationRulesRepositoryTest(unittest.TestCase):
             "Code with separator :: code::([A-Z]{3})",
         )
 
+    def test_custom_patterns_text_must_be_string_when_present(self):
+        invalid_values = [
+            ["Rule :: (\\d{6})"],
+            {"Rule": "(\\d{6})"},
+            123,
+            None,
+        ]
+
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    ValueError, "custom_patterns_text 必须是字符串"
+                ):
+                    verification_rules.validate_verification_code_rules(
+                        {
+                            "enabled_presets": ["digits_6"],
+                            "custom_patterns_text": value,
+                        }
+                    )
+
     def test_validate_accepts_and_checks_persisted_custom_patterns(self):
         rules = verification_rules.validate_verification_code_rules(
             {

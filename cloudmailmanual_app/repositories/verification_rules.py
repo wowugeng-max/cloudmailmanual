@@ -105,9 +105,10 @@ def validate_verification_code_rules(payload: Dict[str, Any]) -> Dict[str, objec
     enabled_presets = list(dict.fromkeys(enabled_presets))
 
     if "custom_patterns_text" in payload:
-        custom_patterns = _parse_custom_patterns(
-            str(payload.get("custom_patterns_text", "") or "")
-        )
+        custom_patterns_text = payload["custom_patterns_text"]
+        if not isinstance(custom_patterns_text, str):
+            raise ValueError("custom_patterns_text 必须是字符串")
+        custom_patterns = _parse_custom_patterns(custom_patterns_text)
     else:
         raw_custom_patterns = payload.get("custom_patterns", [])
         if not isinstance(raw_custom_patterns, list):
