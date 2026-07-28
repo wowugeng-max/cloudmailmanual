@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from cloud_mail_client import CloudMailClient
 from cloudmailmanual_app.repositories import verification_rules
 
 OVERFLOW_PATTERN = "(a){999999999999999999999999999999999999999}"
@@ -323,6 +324,86 @@ class VerificationRulesRepositoryTest(unittest.TestCase):
             verification_rules.validate_verification_code_rules(
                 {"enabled_presets": [], "custom_patterns_text": too_long}
             )
+
+
+class ConfigurableExtractionTest(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.config_path = Path(self.tmpdir.name) / "config.json"
+        self.original_config_path = verification_rules.CONFIG_PATH
+        verification_rules.CONFIG_PATH = self.config_path
+
+    def tearDown(self):
+        verification_rules.CONFIG_PATH = self.original_config_path
+        self.tmpdir.cleanup()
+
+    def write_config(self, value):
+        self.config_path.write_text(json.dumps(value), encoding="utf-8")
+
+    def test_custom_pattern_runs_before_builtins(self):
+        rules = {
+            "enabled_presets": ["digits_6"],
+            "custom_patterns": [
+                {"name": "Preferred", "pattern": r"preferred:\s*(\d{8})"}
+            ],
+        }
+
+        code = CloudMailClient.extract_verification_code(
+            "Fallback 123456, preferred: 87654321",
+            rules=rules,
+        )
+
+        self.assertEqual(code, "87654321")
+
+    def test_custom_pattern_removes_captured_whitespace(self):
+        rules = {
+            "enabled_presets": [],
+            "custom_patterns": [
+                {"name": "Grouped", "pattern": r"token:\s*(\d{3}\s+\d{3})"}
+            ],
+        }
+
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "token: 331 781",
+                rules=rules,
+            ),
+            "331781",
+        )
+
+    def test_disabled_preset_does_not_match(self):
+        rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
+
+        self.assertIsNone(
+            CloudMailClient.extract_verification_code("code: 123456", rules=rules)
+        )
+
+    def test_query_reloads_rules_without_recreating_client(self):
+        self.write_config(
+            {
+                "verification_code_rules": {
+                    "enabled_presets": [],
+                    "custom_patterns": [
+                        {"name": "Eight", "pattern": r"token: (\d{8})"}
+                    ],
+                }
+            }
+        )
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [{"subject": "token: 87654321"}]
+
+        self.assertEqual(client.query_verification_code("a@example.com"), "87654321")
+
+        self.write_config(
+            {
+                "verification_code_rules": {
+                    "enabled_presets": ["digits_6"],
+                    "custom_patterns": [],
+                }
+            }
+        )
+
+        self.assertIsNone(client.query_verification_code("a@example.com"))
 
 
 if __name__ == "__main__":

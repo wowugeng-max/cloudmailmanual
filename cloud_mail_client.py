@@ -13,6 +13,35 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from cloudmailmanual_app.repositories.mail_profiles import get_mail_profile_by_id
+from cloudmailmanual_app.repositories.verification_rules import (
+    get_default_verification_code_rules,
+    get_verification_code_rules,
+)
+
+
+PRESET_PATTERNS = {
+    "alnum_hyphen_3_3": [
+        r"(?<![A-Z0-9-])([A-Z0-9]{3}-[A-Z0-9]{3})(?![A-Z0-9-])"
+    ],
+    "alnum_6": [
+        r"(?<![A-Z0-9])((?=[A-Z0-9]{0,5}[A-Z])(?=[A-Z0-9]{6}(?![A-Z0-9]))[A-Z0-9]{6})(?![A-Z0-9])"
+    ],
+    "labeled_code": [
+        r"(?:verification code|验证码|your code|code is|code below|enter this code)[^A-Z0-9]{0,20}([A-Z0-9-]{6,8})\b",
+        r"(?:verification code|验证码|your code|code is|code below|enter this code)[^\d]{0,40}(\d{6})",
+    ],
+    "digits_spaced_3_3": [
+        r"(?<![A-Z0-9])(\d{3}\s+\d{3})(?![A-Z0-9])"
+    ],
+    "digits_6": [r"(?<![A-Z0-9])(\d{6})(?![A-Z0-9])"],
+}
+PRESET_ORDER = (
+    "alnum_hyphen_3_3",
+    "alnum_6",
+    "labeled_code",
+    "digits_spaced_3_3",
+    "digits_6",
+)
 
 
 def _load_config() -> Dict[str, Any]:
@@ -127,7 +156,12 @@ class CloudMailClient:
         return []
 
     @staticmethod
-    def extract_verification_code(content: str, *, allow_digits: bool = True) -> Optional[str]:
+    def extract_verification_code(
+        content: str,
+        *,
+        allow_digits: bool = True,
+        rules: Optional[Dict[str, object]] = None,
+    ) -> Optional[str]:
         if not content:
             return None
 
@@ -137,48 +171,38 @@ class CloudMailClient:
         normalized = re.sub(r"<script\b[\s\S]*?</script>", " ", normalized, flags=re.IGNORECASE)
         normalized = re.sub(r"<!--.*?-->", " ", normalized, flags=re.DOTALL)
         normalized = re.sub(r"<[^>]+>", " ", normalized)
-        normalized = re.sub(r"\s+", " ", normalized).strip()
+        normalized = re.sub(r"\s+", " ", normalized).strip()[:200_000]
 
-        # 1) 先匹配 Grok 常见格式：XXX-XXX
-        m = re.search(r"(?<![A-Z0-9-])([A-Z0-9]{3}-[A-Z0-9]{3})(?![A-Z0-9-])", normalized)
-        if m:
-            return m.group(1)
-
-        # 2) 再匹配连续 6 位字母数字（如 6PN6XW），优先非纯数字
-        m = re.search(r"(?<![A-Z0-9])([A-Z0-9]{6})(?![A-Z0-9])", normalized)
-        if m:
-            code = m.group(1)
-            if allow_digits or not code.isdigit():
-                return code
-
-        # 3) 带标签语义：code/验证码 后面紧跟候选值
-        m = re.search(
-            r"(?:verification code|验证码|your code|code is|code below|enter this code)[^A-Z0-9]{0,20}([A-Z0-9-]{6,8})\b",
-            normalized,
-            re.IGNORECASE,
+        selected = (
+            rules if rules is not None else get_default_verification_code_rules()
         )
-        if m:
-            code = m.group(1)
-            if allow_digits or not code.replace("-", "").isdigit():
-                return code
+        custom_patterns = selected.get("custom_patterns", [])
+        pattern_specs = [
+            (None, str(item.get("pattern", "")))
+            for item in custom_patterns
+            if isinstance(item, dict) and item.get("pattern")
+        ]
+        enabled_presets = set(
+            str(item) for item in selected.get("enabled_presets", [])
+        )
+        for preset_id in PRESET_ORDER:
+            if preset_id in enabled_presets:
+                pattern_specs.extend(
+                    (preset_id, pattern) for pattern in PRESET_PATTERNS[preset_id]
+                )
 
-        if allow_digits:
-            # 4) 支持邮件模板将 6 位数字按 NNN NNN 分组展示
-            for left, right in re.findall(
-                r"(?<![A-Z0-9])(\d{3})\s+(\d{3})(?![A-Z0-9])",
-                normalized,
-            ):
-                code = f"{left}{right}"
-                if code != "177010":
-                    return code
-
-            # 5) 纯数字优先从更像正文展示位的地方提取，避免命中颜色值/样式数字
-            for code in re.findall(r"(?:verification code|验证码|your code|code is|code below|enter this code)[^\d]{0,40}(\d{6})", normalized, re.IGNORECASE):
-                if code != "177010":
-                    return code
-            for code in re.findall(r"(?<![A-Z0-9])(\d{6})(?![A-Z0-9])", normalized):
-                if code != "177010":
-                    return code
+        for preset_id, pattern in pattern_specs:
+            match = re.search(pattern, normalized, re.IGNORECASE)
+            if not match:
+                continue
+            code = re.sub(r"\s+", "", str(match.group(1) or ""))
+            if not code or code == "177010":
+                continue
+            if preset_id == "alnum_6" and code.isalpha() and not code.isupper():
+                continue
+            if not allow_digits and code.replace("-", "").isdigit():
+                continue
+            return code
 
         return None
 
@@ -189,6 +213,7 @@ class CloudMailClient:
 
         规则：优先从 subject 提取（且优先字母数字混合码），再回退正文。
         """
+        rules = get_verification_code_rules()
         rows = self._email_list(to_email=email, size=50)
         for row in rows:
             subject = str(row.get("subject") or "")
@@ -196,19 +221,31 @@ class CloudMailClient:
             html = str(row.get("content") or "")
 
             # 先查主题：先不允许纯数字，再允许纯数字
-            code = self.extract_verification_code(subject, allow_digits=False)
+            code = self.extract_verification_code(
+                subject, allow_digits=False, rules=rules
+            )
             if not code:
-                code = self.extract_verification_code(subject, allow_digits=True)
+                code = self.extract_verification_code(
+                    subject, allow_digits=True, rules=rules
+                )
 
             # 主题没有再查正文（同样先偏好非纯数字）
             if not code:
-                code = self.extract_verification_code(text, allow_digits=False)
+                code = self.extract_verification_code(
+                    text, allow_digits=False, rules=rules
+                )
             if not code:
-                code = self.extract_verification_code(html, allow_digits=False)
+                code = self.extract_verification_code(
+                    html, allow_digits=False, rules=rules
+                )
             if not code:
-                code = self.extract_verification_code(text, allow_digits=True)
+                code = self.extract_verification_code(
+                    text, allow_digits=True, rules=rules
+                )
             if not code:
-                code = self.extract_verification_code(html, allow_digits=True)
+                code = self.extract_verification_code(
+                    html, allow_digits=True, rules=rules
+                )
 
             if code:
                 return {
