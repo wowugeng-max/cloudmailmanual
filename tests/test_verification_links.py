@@ -1,9 +1,9 @@
-from unittest import TestCase
+import unittest
 
 from cloudmailmanual_app.services.verification_links import extract_verification_link
 
 
-class VerificationLinkExtractionTest(TestCase):
+class VerificationLinkExtractionTest(unittest.TestCase):
     def test_extracts_action_link_and_preserves_original_tracking_href(self):
         href = (
             "https://awstrack.me/L0/https:%2F%2Fservice.example%2Fverify-email"
@@ -15,9 +15,10 @@ class VerificationLinkExtractionTest(TestCase):
 
     def test_prefers_verify_action_over_footer_links(self):
         html = (
-            '<a href="https://example.test/">Company logo</a>'
-            '<a href="https://example.test/preferences">Manage preferences</a>'
             '<a href="https://example.test/confirm?token=abc">Confirm account</a>'
+            '<a href="https://example.test/preferences">Manage preferences</a>'
+            '<a href="https://example.test/privacy">Privacy policy</a>'
+            '<a href="https://example.test/contact">Company footer</a>'
         )
 
         self.assertEqual(
@@ -26,15 +27,33 @@ class VerificationLinkExtractionTest(TestCase):
         )
 
     def test_rejects_unsafe_relative_and_unrelated_links(self):
-        html = (
-            '<a href="javascript:alert(1)">Verify</a>'
-            '<a href="data:text/html,verify">Verify</a>'
-            '<a href="mailto:help@example.test">Confirm</a>'
-            '<a href="/verify-email?token=abc">Verify</a>'
-            '<a href="https://example.test/privacy">Privacy policy</a>'
+        cases = (
+            ("javascript", '<a href="javascript:alert(1)">Verify</a>'),
+            ("data", '<a href="data:text/html,verify">Verify</a>'),
+            ("mailto", '<a href="mailto:help@example.test">Confirm</a>'),
+            ("relative", '<a href="/verify-email?token=abc">Verify</a>'),
+            (
+                "unrelated_http",
+                '<a href="https://example.test/privacy">Privacy policy</a>',
+            ),
         )
 
-        self.assertIsNone(extract_verification_link(html))
+        for case, html in cases:
+            with self.subTest(case=case):
+                self.assertIsNone(extract_verification_link(html))
+
+    def test_skips_unsafe_and_unrelated_links_before_valid_action(self):
+        html = (
+            '<a href="javascript:alert(1)">Verify</a>'
+            '<a href="https://example.test/privacy">Privacy policy</a>'
+            '<a href="/confirm?token=relative">Confirm</a>'
+            '<a href="https://example.test/activate?token=abc">Activate account</a>'
+        )
+
+        self.assertEqual(
+            extract_verification_link(html),
+            "https://example.test/activate?token=abc",
+        )
 
     def test_tolerates_malformed_html_and_missing_href(self):
         html = (
@@ -51,3 +70,7 @@ class VerificationLinkExtractionTest(TestCase):
         html = '<a href="https://example.test/news">Read our news</a>'
 
         self.assertIsNone(extract_verification_link(html))
+
+
+if __name__ == "__main__":
+    unittest.main()
