@@ -14,6 +14,8 @@ class AppStructureTest(unittest.TestCase):
         self.assertIn("/api/query-code", routes)
         self.assertIn("/api/history/accounts", routes)
         self.assertIn("/api/settings/mail-profiles", routes)
+        self.assertIn("/api/settings/verification-code-rules", routes)
+        self.assertIn("/api/settings/verification-code-rules/test", routes)
         self.assertIn("/api/domain-bodies", routes)
 
     def test_services_are_split_from_flask_routes(self):

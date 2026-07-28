@@ -30,6 +30,12 @@ from .repositories.verification import (
     get_verification_query_history,
     save_verification_query,
 )
+from .repositories.verification_rules import (
+    PRESET_METADATA,
+    get_verification_code_rules,
+    save_verification_code_rules,
+    validate_verification_code_rules,
+)
 from .services.domains import generate_domain_bodies, generate_third_level_subdomains
 from .services.registration import batch_register
 
@@ -105,6 +111,40 @@ def register_routes(app):
             return jsonify({"ok": True, **data})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 400
+
+
+    @app.get("/api/settings/verification-code-rules")
+    @login_required
+    def api_get_verification_code_rules():
+        rules = get_verification_code_rules()
+        return jsonify({"ok": True, "available_presets": PRESET_METADATA, **rules})
+
+
+    @app.post("/api/settings/verification-code-rules")
+    @login_required
+    def api_save_verification_code_rules():
+        payload = request.get_json(silent=True) or {}
+        try:
+            rules = save_verification_code_rules(payload)
+            return jsonify({"ok": True, **rules})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+    @app.post("/api/settings/verification-code-rules/test")
+    @login_required
+    def api_test_verification_code_rules():
+        payload = request.get_json(silent=True) or {}
+        content = str(payload.get("content", "") or "")
+        if len(content) > 100000:
+            return jsonify({"ok": False, "error": "测试内容最多 100000 个字符"}), 400
+
+        try:
+            rules = validate_verification_code_rules(payload)
+            code = CloudMailClient.extract_verification_code(content, rules=rules)
+            return jsonify({"ok": True, "code": code or ""})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
     
     
     @app.post("/api/settings/max-generate-limit")
