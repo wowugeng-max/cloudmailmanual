@@ -5,6 +5,8 @@ from pathlib import Path
 
 from cloudmailmanual_app.repositories import verification_rules
 
+OVERFLOW_PATTERN = "(a){999999999999999999999999999999999999999}"
+
 
 class VerificationRulesRepositoryTest(unittest.TestCase):
     def setUp(self):
@@ -192,6 +194,32 @@ class VerificationRulesRepositoryTest(unittest.TestCase):
                     "custom_patterns_text": "Good :: (\\d{6})\nBad :: ([",
                 }
             )
+
+    def test_regex_compile_overflow_reports_source_line(self):
+        with self.assertRaisesRegex(ValueError, "第 1 行.*正则表达式无效"):
+            verification_rules.validate_verification_code_rules(
+                {
+                    "enabled_presets": ["digits_6"],
+                    "custom_patterns_text": f"Huge :: {OVERFLOW_PATTERN}",
+                }
+            )
+
+    def test_manual_config_with_regex_compile_overflow_falls_back_to_default(self):
+        self.write_config(
+            {
+                "verification_code_rules": {
+                    "enabled_presets": ["digits_6"],
+                    "custom_patterns": [
+                        {"name": "Huge", "pattern": OVERFLOW_PATTERN},
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(
+            verification_rules.get_verification_code_rules(),
+            verification_rules.get_default_verification_code_rules(),
+        )
 
     def test_pattern_requires_capture_group(self):
         with self.assertRaisesRegex(ValueError, "第 1 行.*捕获组"):

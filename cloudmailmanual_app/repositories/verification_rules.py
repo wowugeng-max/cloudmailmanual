@@ -72,7 +72,7 @@ def _parse_custom_patterns(text: str) -> List[Dict[str, str]]:
 
         try:
             compiled = re.compile(pattern, re.IGNORECASE)
-        except re.error as exc:
+        except (re.error, OverflowError) as exc:
             raise ValueError(f"第 {line_number} 行正则表达式无效: {exc}") from exc
         if compiled.groups < 1:
             raise ValueError(f"第 {line_number} 行必须包含至少一个捕获组")
