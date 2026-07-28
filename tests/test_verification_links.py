@@ -71,6 +71,25 @@ class VerificationLinkExtractionTest(unittest.TestCase):
 
         self.assertIsNone(extract_verification_link(html))
 
+    def test_token_evidence_without_action_word_is_not_a_candidate(self):
+        html = (
+            '<a href="https://example.test/account?token=redacted">'
+            "Open account"
+            "</a>"
+        )
+
+        self.assertIsNone(extract_verification_link(html))
+
+    def test_prefers_first_action_link_when_scores_are_equal(self):
+        first_href = "https://first.example.test/verify"
+        second_href = "https://second.example.test/verify"
+        html = (
+            f'<a href="{first_href}">Verify account</a>'
+            f'<a href="{second_href}">Verify account</a>'
+        )
+
+        self.assertEqual(extract_verification_link(html), first_href)
+
 
 if __name__ == "__main__":
     unittest.main()
