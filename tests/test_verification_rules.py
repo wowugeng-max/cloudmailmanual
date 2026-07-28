@@ -389,6 +389,48 @@ class ConfigurableExtractionTest(unittest.TestCase):
             "ABC123",
         )
 
+    def test_alnum_preset_rejects_lowercase_bare_code(self):
+        rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
+
+        self.assertIsNone(
+            CloudMailClient.extract_verification_code(
+                "order abc123 shipped",
+                rules=rules,
+            )
+        )
+
+    def test_alnum_preset_continues_after_lowercase_bare_code(self):
+        rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
+
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "order abc123 CODE99",
+                rules=rules,
+            ),
+            "CODE99",
+        )
+
+    def test_hyphen_preset_rejects_lowercase_bare_code(self):
+        rules = {"enabled_presets": ["alnum_hyphen_3_3"], "custom_patterns": []}
+
+        self.assertIsNone(
+            CloudMailClient.extract_verification_code(
+                "tracking abc-123 complete",
+                rules=rules,
+            )
+        )
+
+    def test_hyphen_preset_continues_after_lowercase_bare_code(self):
+        rules = {"enabled_presets": ["alnum_hyphen_3_3"], "custom_patterns": []}
+
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "tracking abc-123 ABC-123",
+                rules=rules,
+            ),
+            "ABC-123",
+        )
+
     def test_digits_preset_continues_after_sentinel(self):
         rules = {"enabled_presets": ["digits_6"], "custom_patterns": []}
 

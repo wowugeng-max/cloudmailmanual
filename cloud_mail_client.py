@@ -196,7 +196,13 @@ class CloudMailClient:
                 code = re.sub(r"\s+", "", str(match.group(1) or ""))
                 if not code or code == "177010":
                     continue
-                if preset_id == "alnum_6" and code.isalpha() and not code.isupper():
+                if preset_id == "alnum_6" and not re.fullmatch(
+                    r"(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6}", code
+                ):
+                    continue
+                if preset_id == "alnum_hyphen_3_3" and not re.fullmatch(
+                    r"[A-Z0-9]{3}-[A-Z0-9]{3}", code
+                ):
                     continue
                 if not allow_digits and code.replace("-", "").isdigit():
                     continue
