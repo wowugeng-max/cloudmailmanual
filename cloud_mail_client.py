@@ -192,17 +192,15 @@ class CloudMailClient:
                 )
 
         for preset_id, pattern in pattern_specs:
-            match = re.search(pattern, normalized, re.IGNORECASE)
-            if not match:
-                continue
-            code = re.sub(r"\s+", "", str(match.group(1) or ""))
-            if not code or code == "177010":
-                continue
-            if preset_id == "alnum_6" and code.isalpha() and not code.isupper():
-                continue
-            if not allow_digits and code.replace("-", "").isdigit():
-                continue
-            return code
+            for match in re.finditer(pattern, normalized, re.IGNORECASE):
+                code = re.sub(r"\s+", "", str(match.group(1) or ""))
+                if not code or code == "177010":
+                    continue
+                if preset_id == "alnum_6" and code.isalpha() and not code.isupper():
+                    continue
+                if not allow_digits and code.replace("-", "").isdigit():
+                    continue
+                return code
 
         return None
 

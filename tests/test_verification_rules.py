@@ -378,6 +378,42 @@ class ConfigurableExtractionTest(unittest.TestCase):
             CloudMailClient.extract_verification_code("code: 123456", rules=rules)
         )
 
+    def test_alnum_preset_continues_after_plain_word(self):
+        rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
+
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "Please enter ABC123",
+                rules=rules,
+            ),
+            "ABC123",
+        )
+
+    def test_digits_preset_continues_after_sentinel(self):
+        rules = {"enabled_presets": ["digits_6"], "custom_patterns": []}
+
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "177010 654321",
+                rules=rules,
+            ),
+            "654321",
+        )
+
+    def test_spaced_digits_preset_continues_after_sentinel(self):
+        rules = {
+            "enabled_presets": ["digits_spaced_3_3"],
+            "custom_patterns": [],
+        }
+
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "177 010 331 781",
+                rules=rules,
+            ),
+            "331781",
+        )
+
     def test_query_reloads_rules_without_recreating_client(self):
         self.write_config(
             {
