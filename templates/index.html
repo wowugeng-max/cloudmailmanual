@@ -510,6 +510,7 @@ let currentInUseEmail = '';
 let mailProfiles = [];
 let activeMailProfileId = '';
 let verificationPresetMetadata = [];
+let verificationRulesBusy = false;
 
 async function loadMaxLimit() {
   try {
@@ -719,6 +720,22 @@ async function saveMailProfiles() {
   }
 }
 
+function setVerificationRulesBusy(isBusy) {
+  verificationRulesBusy = isBusy;
+  [
+    'testVerificationRulesBtn',
+    'saveVerificationRulesBtn',
+    'verificationCustomPatterns',
+    'verificationRuleTestContent',
+  ].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) element.disabled = isBusy;
+  });
+  document.querySelectorAll('[data-verification-preset]').forEach((input) => {
+    input.disabled = isBusy;
+  });
+}
+
 function collectVerificationRules() {
   return {
     enabled_presets: Array.from(document.querySelectorAll('[data-verification-preset]:checked'))
@@ -742,6 +759,7 @@ function renderVerificationPresets(enabledPresets) {
     input.value = preset.id;
     input.dataset.verificationPreset = '1';
     input.checked = enabled.includes(preset.id);
+    input.disabled = verificationRulesBusy;
     span.textContent = `${preset.label} (${preset.example})`;
 
     label.appendChild(input);
@@ -751,7 +769,9 @@ function renderVerificationPresets(enabledPresets) {
 }
 
 async function loadVerificationRules() {
+  if (verificationRulesBusy) return;
   const status = document.getElementById('verificationRulesStatus');
+  setVerificationRulesBusy(true);
   try {
     const res = await fetch('/api/settings/verification-code-rules');
     const data = await res.json();
@@ -767,18 +787,20 @@ async function loadVerificationRules() {
   } catch (e) {
     status.className = 'status err';
     status.textContent = `加载失败：${e.message || e}`;
+  } finally {
+    setVerificationRulesBusy(false);
   }
 }
 
 async function testVerificationRules() {
-  const btn = document.getElementById('testVerificationRulesBtn');
+  if (verificationRulesBusy) return;
   const status = document.getElementById('verificationRulesStatus');
   const payload = {
     ...collectVerificationRules(),
     content: String(document.getElementById('verificationRuleTestContent')?.value || ''),
   };
 
-  btn.disabled = true;
+  setVerificationRulesBusy(true);
   status.className = 'status';
   status.textContent = '正在测试...';
 
@@ -804,15 +826,16 @@ async function testVerificationRules() {
     status.className = 'status err';
     status.textContent = `测试失败：${e.message || e}`;
   } finally {
-    btn.disabled = false;
+    setVerificationRulesBusy(false);
   }
 }
 
 async function saveVerificationRules() {
-  const btn = document.getElementById('saveVerificationRulesBtn');
+  if (verificationRulesBusy) return;
   const status = document.getElementById('verificationRulesStatus');
+  const payload = collectVerificationRules();
 
-  btn.disabled = true;
+  setVerificationRulesBusy(true);
   status.className = 'status';
   status.textContent = '正在保存验证码规则...';
 
@@ -820,7 +843,7 @@ async function saveVerificationRules() {
     const res = await fetch('/api/settings/verification-code-rules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(collectVerificationRules()),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
@@ -835,7 +858,7 @@ async function saveVerificationRules() {
     status.className = 'status err';
     status.textContent = `保存失败：${e.message || e}`;
   } finally {
-    btn.disabled = false;
+    setVerificationRulesBusy(false);
   }
 }
 

@@ -1,3 +1,4 @@
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -62,6 +63,8 @@ class RowVerificationUiTest(unittest.TestCase):
     def test_mail_settings_exposes_verification_rule_editor(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
 
+        self.assertIn("function setVerificationRulesBusy", html)
+        self.assertIn("let verificationRulesBusy = false;", html)
         self.assertIn(
             '<label for="verificationCustomPatterns">自定义正则</label>',
             html,
@@ -96,6 +99,20 @@ class RowVerificationUiTest(unittest.TestCase):
         self.assertIn("fetch('/api/settings/verification-code-rules')", html)
         self.assertIn("fetch('/api/settings/verification-code-rules/test'", html)
 
+        busy_helper = html.split("function setVerificationRulesBusy", 1)[1].split(
+            "function collectVerificationRules", 1
+        )[0]
+        for expected in (
+            "testVerificationRulesBtn",
+            "saveVerificationRulesBtn",
+            "verificationCustomPatterns",
+            "verificationRuleTestContent",
+            "[data-verification-preset]",
+            "element.disabled = isBusy",
+            "input.disabled = isBusy",
+        ):
+            self.assertIn(expected, busy_helper)
+
         collector = html.split("function collectVerificationRules", 1)[1].split(
             "function renderVerificationPresets", 1
         )[0]
@@ -113,7 +130,19 @@ class RowVerificationUiTest(unittest.TestCase):
         self.assertIn("container.innerHTML = '';", preset_renderer)
         self.assertIn("document.createElement('label')", preset_renderer)
         self.assertIn("span.textContent = `${preset.label} (${preset.example})`;", preset_renderer)
+        self.assertIn("input.disabled = verificationRulesBusy;", preset_renderer)
         self.assertNotIn("innerHTML = `", preset_renderer)
+
+        load_rules = html.split("async function loadVerificationRules", 1)[1].split(
+            "async function testVerificationRules", 1
+        )[0]
+        for expected in (
+            "if (verificationRulesBusy) return;",
+            "setVerificationRulesBusy(true);",
+            "finally {",
+            "setVerificationRulesBusy(false);",
+        ):
+            self.assertIn(expected, load_rules)
 
         test_rules = html.split("async function testVerificationRules", 1)[1].split(
             "async function saveVerificationRules", 1
@@ -126,8 +155,17 @@ class RowVerificationUiTest(unittest.TestCase):
             "JSON.stringify(payload)",
             "status.textContent = `提取结果：${data.code}`;",
             "status.textContent = `测试失败：${e.message || e}`;",
+            "if (verificationRulesBusy) return;",
+            "setVerificationRulesBusy(true);",
+            "finally {",
+            "setVerificationRulesBusy(false);",
         ):
             self.assertIn(expected, test_rules)
+        self.assertLess(
+            test_rules.index("const payload = {"),
+            test_rules.index("setVerificationRulesBusy(true);"),
+        )
+        self.assertNotIn("saveMailProfiles", test_rules)
 
         save_rules = html.split("async function saveVerificationRules", 1)[1].split(
             "async function saveMaxLimit", 1
@@ -135,13 +173,153 @@ class RowVerificationUiTest(unittest.TestCase):
         for expected in (
             "/api/settings/verification-code-rules",
             "method: 'POST'",
-            "JSON.stringify(collectVerificationRules())",
+            "const payload = collectVerificationRules();",
+            "JSON.stringify(payload)",
+            "if (verificationRulesBusy) return;",
+            "setVerificationRulesBusy(true);",
+            "finally {",
+            "setVerificationRulesBusy(false);",
+            "renderVerificationPresets(data.enabled_presets || []);",
+            "document.getElementById('verificationCustomPatterns').value",
             "status.textContent = '验证码规则已保存，下次查询立即生效';",
             "status.textContent = `保存失败：${e.message || e}`;",
         ):
             self.assertIn(expected, save_rules)
+        self.assertLess(
+            save_rules.index("const payload = collectVerificationRules();"),
+            save_rules.index("setVerificationRulesBusy(true);"),
+        )
+        self.assertNotIn("saveMailProfiles", save_rules)
+
+        save_mail_profiles = html.split("async function saveMailProfiles", 1)[1].split(
+            "function setVerificationRulesBusy", 1
+        )[0]
+        self.assertNotIn("saveVerificationRules", save_mail_profiles)
 
         self.assertIn("验证码规则已保存，下次查询立即生效", html)
+
+    def test_verification_rule_requests_share_busy_state(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+        main_script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const assert = require('assert');
+
+const source = fs.readFileSync(0, 'utf8');
+const presetInputs = [];
+const makeElement = (id = '') => ({
+  id,
+  value: '',
+  disabled: false,
+  checked: false,
+  dataset: {},
+  children: [],
+  className: '',
+  textContent: '',
+  appendChild(child) { this.children.push(child); },
+});
+const elements = {
+  testVerificationRulesBtn: makeElement('testVerificationRulesBtn'),
+  saveVerificationRulesBtn: makeElement('saveVerificationRulesBtn'),
+  verificationCustomPatterns: makeElement('verificationCustomPatterns'),
+  verificationRuleTestContent: makeElement('verificationRuleTestContent'),
+  verificationPresetOptions: makeElement('verificationPresetOptions'),
+  verificationRulesStatus: makeElement('verificationRulesStatus'),
+};
+elements.verificationCustomPatterns.value = 'Six :: code: (\\d{6})';
+elements.verificationRuleTestContent.value = 'code: 123456';
+
+const document = {
+  documentElement: { dataset: {} },
+  getElementById(id) { return elements[id] || null; },
+  querySelectorAll(selector) {
+    if (selector === '[data-verification-preset]:checked') {
+      return presetInputs.filter((input) => input.checked);
+    }
+    if (selector === '[data-verification-preset]') return presetInputs;
+    return [];
+  },
+  createElement(tagName) {
+    const element = makeElement();
+    if (tagName === 'input') presetInputs.push(element);
+    return element;
+  },
+};
+const context = vm.createContext({
+  document,
+  window: { addEventListener() {} },
+  console,
+  URLSearchParams,
+  setTimeout,
+  clearTimeout,
+  navigator: {},
+});
+vm.runInContext(source, context);
+
+(async () => {
+  vm.runInContext(`
+    verificationPresetMetadata = [
+      { id: 'digits_6', label: 'Six digits', example: '123456' },
+    ];
+    renderVerificationPresets(['digits_6']);
+  `, context);
+  assert.strictEqual(presetInputs.length, 1);
+  assert.strictEqual(presetInputs[0].checked, true);
+
+  let fetchCount = 0;
+  let resolveFetch;
+  context.fetch = () => {
+    fetchCount += 1;
+    return new Promise((resolve) => { resolveFetch = resolve; });
+  };
+
+  const testRequest = vm.runInContext('testVerificationRules()', context);
+  const ignoredSave = vm.runInContext('saveVerificationRules()', context);
+  await ignoredSave;
+
+  assert.strictEqual(fetchCount, 1);
+  for (const id of [
+    'testVerificationRulesBtn',
+    'saveVerificationRulesBtn',
+    'verificationCustomPatterns',
+    'verificationRuleTestContent',
+  ]) {
+    assert.strictEqual(elements[id].disabled, true, `${id} should be disabled`);
+  }
+  assert.strictEqual(presetInputs[0].disabled, true);
+
+  resolveFetch({
+    ok: true,
+    json: async () => ({ ok: true, code: '123456' }),
+  });
+  await testRequest;
+
+  assert.strictEqual(elements.verificationRulesStatus.textContent, '提取结果：123456');
+  for (const id of [
+    'testVerificationRulesBtn',
+    'saveVerificationRulesBtn',
+    'verificationCustomPatterns',
+    'verificationRuleTestContent',
+  ]) {
+    assert.strictEqual(elements[id].disabled, false, `${id} should be enabled`);
+  }
+  assert.strictEqual(presetInputs[0].disabled, false);
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+        result = subprocess.run(
+            ["node", "-e", harness],
+            input=main_script,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 if __name__ == "__main__":
