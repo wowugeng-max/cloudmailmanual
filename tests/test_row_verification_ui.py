@@ -62,6 +62,10 @@ class RowVerificationUiTest(unittest.TestCase):
     def test_mail_settings_exposes_verification_rule_editor(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
 
+        self.assertIn(
+            '<label for="verificationCustomPatterns">自定义正则</label>',
+            html,
+        )
         for control_id in (
             "verificationPresetOptions",
             "verificationCustomPatterns",
@@ -79,9 +83,29 @@ class RowVerificationUiTest(unittest.TestCase):
         ):
             self.assertIn(f"function {function_name}", html)
 
+        self.assertIn(
+            'id="testVerificationRulesBtn" class="btn-secondary" '
+            'onclick="testVerificationRules()"',
+            html,
+        )
+        self.assertIn(
+            'id="saveVerificationRulesBtn" onclick="saveVerificationRules()"',
+            html,
+        )
         self.assertIn("loadVerificationRules();", html)
         self.assertIn("fetch('/api/settings/verification-code-rules')", html)
         self.assertIn("fetch('/api/settings/verification-code-rules/test'", html)
+
+        collector = html.split("function collectVerificationRules", 1)[1].split(
+            "function renderVerificationPresets", 1
+        )[0]
+        for expected in (
+            "enabled_presets",
+            "custom_patterns_text",
+            "[data-verification-preset]:checked",
+            "verificationCustomPatterns",
+        ):
+            self.assertIn(expected, collector)
 
         preset_renderer = html.split("function renderVerificationPresets", 1)[1].split(
             "async function loadVerificationRules", 1
@@ -90,6 +114,32 @@ class RowVerificationUiTest(unittest.TestCase):
         self.assertIn("document.createElement('label')", preset_renderer)
         self.assertIn("span.textContent = `${preset.label} (${preset.example})`;", preset_renderer)
         self.assertNotIn("innerHTML = `", preset_renderer)
+
+        test_rules = html.split("async function testVerificationRules", 1)[1].split(
+            "async function saveVerificationRules", 1
+        )[0]
+        for expected in (
+            "...collectVerificationRules()",
+            "verificationRuleTestContent",
+            "/api/settings/verification-code-rules/test",
+            "method: 'POST'",
+            "JSON.stringify(payload)",
+            "status.textContent = `提取结果：${data.code}`;",
+            "status.textContent = `测试失败：${e.message || e}`;",
+        ):
+            self.assertIn(expected, test_rules)
+
+        save_rules = html.split("async function saveVerificationRules", 1)[1].split(
+            "async function saveMaxLimit", 1
+        )[0]
+        for expected in (
+            "/api/settings/verification-code-rules",
+            "method: 'POST'",
+            "JSON.stringify(collectVerificationRules())",
+            "status.textContent = '验证码规则已保存，下次查询立即生效';",
+            "status.textContent = `保存失败：${e.message || e}`;",
+        ):
+            self.assertIn(expected, save_rules)
 
         self.assertIn("验证码规则已保存，下次查询立即生效", html)
 
