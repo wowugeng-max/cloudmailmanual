@@ -623,6 +623,53 @@ else:
             },
         )
 
+    def test_query_detail_returns_plain_text_bare_link_without_html(self):
+        href = "https://example.test/verify-email?token=synthetic-value"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "text": f"Activate your account using {href}",
+                "sendEmail": "sender@example.test",
+                "subject": "Activate your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Activate your account",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_detail_passes_html_and_text_to_link_extractor(self):
+        href = "https://example.test/verify-email?token=synthetic-value"
+        html = f'<a href="{href}">Activate your account</a>'
+        text = f"Activate your account using {href}"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": html,
+                "text": text,
+                "sendEmail": "sender@example.test",
+                "subject": "Activate your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        with patch(
+            "cloud_mail_client.extract_verification_link",
+            return_value=href,
+        ) as link_extractor:
+            detail = client.query_verification_detail("a@example.com")
+
+        link_extractor.assert_called_once_with(html, text)
+        self.assertEqual(detail["verification_url"], href)
+
     def test_query_detail_returns_code_and_link_from_same_message(self):
         href = "https://example.test/confirm?token=redacted"
         client = CloudMailClient.__new__(CloudMailClient)

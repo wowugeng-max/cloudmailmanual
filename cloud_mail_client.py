@@ -309,7 +309,7 @@ class CloudMailClient:
                 )
 
             try:
-                verification_url = extract_verification_link(html) or ""
+                verification_url = extract_verification_link(html, text) or ""
             except (TypeError, ValueError):
                 verification_url = ""
 
