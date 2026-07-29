@@ -763,6 +763,32 @@ else:
                     },
                 )
 
+    def test_query_detail_ignores_code_after_mismatched_hidden_end_tag(self):
+        href = "https://example.test/verify?token=XYZ789"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": (
+                    "<head></style>ABC123</head>"
+                    f"<p>Activate using {href}</p>"
+                ),
+                "sendEmail": "sender@example.test",
+                "subject": "Activate your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Activate your account",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
     def test_query_detail_uses_literal_url_masking_for_plain_text(self):
         href = (
             "https://example.test/verify?x=1"

@@ -204,13 +204,14 @@ Add `visible_text_parts` in `_AnchorParser.__init__()`:
 
 ```python
 self.visible_text_parts: List[str] = []
+self._invisible_tags: List[str] = []
 ```
 
 Replace `handle_data()` with:
 
 ```python
 def handle_data(self, data: str) -> None:
-    if self._invisible_depth:
+    if self._invisible_tags:
         return
     self.visible_text_parts.append(data)
     if self._href is not None:
@@ -220,7 +221,10 @@ def handle_data(self, data: str) -> None:
 This preserves nested visible anchor labels while excluding `head`, `script`,
 `style`, and `template` text from both anchor and bare-link evidence. Add an
 `extract_visible_html_text()` helper around the same parser; its output must be
-derived only from `handle_data()` and must never include attributes.
+derived only from `handle_data()` and must never include attributes. Push every
+invisible start tag onto `_invisible_tags`; an invisible end tag may pop only
+when it matches the stack top. Ignore mismatched closers so malformed markup
+cannot lower hidden state.
 
 - [ ] **Step 4: Add conservative bare-URL cleanup and context helpers**
 
@@ -341,7 +345,7 @@ def extract_verification_link(
     best_href: Optional[str] = None
     best_score: Optional[int] = None
     for candidate in candidates:
-        href = candidate.href.strip()
+        href = candidate.href
         if not href:
             continue
 
@@ -369,6 +373,13 @@ def extract_verification_link(
 
     return best_href
 ```
+
+Do not trim anchor `href` values. Preserve the parser-provided candidate
+exactly for deduplication, validation, scoring, and return. Empty values are
+skipped; any whitespace or control character causes validation failure. Reject
+empty port markers, hostname empty labels, and literal host backslashes while
+continuing to accept bracketed IPv6 and ordinary explicit ports. Access
+`parsed.port` so invalid and out-of-range ports continue to raise and reject.
 
 Skip only exact duplicate `(href, candidate.text)` evidence. Different
 occurrences with different labels or nearby context remain independently

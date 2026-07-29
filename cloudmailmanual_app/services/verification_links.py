@@ -70,7 +70,7 @@ class _AnchorParser(HTMLParser):
         self.visible_text_parts: List[str] = []
         self._href: Optional[str] = None
         self._text_parts: List[str] = []
-        self._invisible_depth = 0
+        self._invisible_tags: List[str] = []
 
     def _finish_anchor(self) -> None:
         if self._href is not None:
@@ -94,9 +94,9 @@ class _AnchorParser(HTMLParser):
     ) -> None:
         normalized_tag = tag.casefold()
         if normalized_tag in _INVISIBLE_TAGS:
-            self._invisible_depth += 1
+            self._invisible_tags.append(normalized_tag)
             return
-        if self._invisible_depth or normalized_tag != "a":
+        if self._invisible_tags or normalized_tag != "a":
             return
         self._finish_anchor()
         self._href = self._href_from_attrs(attrs)
@@ -107,7 +107,7 @@ class _AnchorParser(HTMLParser):
         attrs: List[Tuple[str, Optional[str]]],
     ) -> None:
         normalized_tag = tag.casefold()
-        if normalized_tag in _INVISIBLE_TAGS or self._invisible_depth:
+        if normalized_tag in _INVISIBLE_TAGS or self._invisible_tags:
             return
         if normalized_tag != "a":
             return
@@ -117,7 +117,7 @@ class _AnchorParser(HTMLParser):
             self.anchors.append(_Anchor(href, ""))
 
     def handle_data(self, data: str) -> None:
-        if self._invisible_depth:
+        if self._invisible_tags:
             return
         self.visible_text_parts.append(data)
         if self._href is not None:
@@ -126,10 +126,10 @@ class _AnchorParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         normalized_tag = tag.casefold()
         if normalized_tag in _INVISIBLE_TAGS:
-            if self._invisible_depth:
-                self._invisible_depth -= 1
+            if self._invisible_tags and self._invisible_tags[-1] == normalized_tag:
+                self._invisible_tags.pop()
             return
-        if not self._invisible_depth and normalized_tag == "a":
+        if not self._invisible_tags and normalized_tag == "a":
             self._finish_anchor()
 
     def close(self) -> None:
@@ -164,6 +164,18 @@ def _has_forbidden_url_characters(value: str) -> bool:
     )
 
 
+def _has_valid_host_shape(parsed: SplitResult, hostname: str) -> bool:
+    if parsed.netloc.endswith(":") or "\\" in parsed.netloc:
+        return False
+    if ":" in hostname:
+        return parsed.netloc.startswith("[")
+
+    labels = hostname.split(".")
+    if labels and not labels[-1]:
+        labels = labels[:-1]
+    return bool(labels) and all(labels)
+
+
 def _is_absolute_http_url(value: str) -> bool:
     if not isinstance(value, str) or not value or _has_forbidden_url_characters(value):
         return False
@@ -182,6 +194,7 @@ def _is_absolute_http_url(value: str) -> bool:
         and bool(parsed.netloc)
         and bool(hostname)
         and bool(hostname.strip("."))
+        and _has_valid_host_shape(parsed, hostname)
         and username is None
         and password is None
     )
@@ -348,7 +361,7 @@ def extract_verification_link(
     best_href: Optional[str] = None
     best_score: Optional[int] = None
     for candidate in candidates:
-        href = candidate.href.strip()
+        href = candidate.href
         if not href:
             continue
 

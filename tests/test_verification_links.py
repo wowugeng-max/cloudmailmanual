@@ -48,6 +48,77 @@ class VerificationLinkExtractionTest(unittest.TestCase):
             "Visible <ABC123>",
         )
 
+    def test_visible_html_text_ignores_mismatched_hidden_end_tags(self):
+        cases = (
+            (
+                "head",
+                "<head></style>ABC123</head><p>Visible</p>",
+            ),
+            (
+                "nested_head",
+                (
+                    "<head><script>SECRET1</script></template>ABC123</head>"
+                    "<p>Visible</p>"
+                ),
+            ),
+            (
+                "script",
+                "<script></head>ABC123</script><p>Visible</p>",
+            ),
+            (
+                "style",
+                "<style></template>ABC123</style><p>Visible</p>",
+            ),
+            (
+                "template",
+                "<template></head>ABC123</template><p>Visible</p>",
+            ),
+            (
+                "nested_template",
+                (
+                    "<template><head>SECRET1</head></script>ABC123</template>"
+                    "<p>Visible</p>"
+                ),
+            ),
+        )
+
+        for case, html in cases:
+            with self.subTest(case=case):
+                self.assertEqual(
+                    verification_links.extract_visible_html_text(html),
+                    "Visible",
+                )
+
+    def test_links_stay_hidden_after_mismatched_hidden_end_tags(self):
+        href = "https://example.test/verify?token=XYZ789"
+        cases = (
+            ("head", f'<head></style><a href="{href}">Verify</a></head>'),
+            (
+                "nested_head",
+                (
+                    "<head><script>SECRET1</script></template>"
+                    f'<a href="{href}">Verify</a></head>'
+                ),
+            ),
+            ("script", f'<script></head><a href="{href}">Verify</a></script>'),
+            ("style", f'<style></template><a href="{href}">Verify</a></style>'),
+            (
+                "template",
+                f'<template></head><a href="{href}">Verify</a></template>',
+            ),
+            (
+                "nested_template",
+                (
+                    "<template><head>SECRET1</head></script>"
+                    f'<a href="{href}">Verify</a></template>'
+                ),
+            ),
+        )
+
+        for case, html in cases:
+            with self.subTest(case=case):
+                self.assertIsNone(extract_verification_link(html))
+
     def test_mask_http_urls_only_masks_literal_http_urls(self):
         encoded_href = "https&#58;//example.test/verify?token=ABC123"
         literal_href = "https://example.test/verify?token=XYZ789"
@@ -212,6 +283,29 @@ class VerificationLinkExtractionTest(unittest.TestCase):
             "%3Ftoken%3Dredacted/abc"
         )
         html = f'<a href="{href}">Verify Email Address</a>'
+
+        self.assertEqual(extract_verification_link(html), href)
+
+    def test_rejects_anchor_hrefs_with_leading_or_trailing_whitespace(self):
+        href = "https://example.test/verify?token=XYZ789"
+        cases = (
+            ("encoded_newline", f'&#10;{href}'),
+            ("encoded_tab", f'&#9;{href}'),
+            ("leading_space", f' {href}'),
+            ("trailing_space", f'{href} '),
+        )
+
+        for case, raw_href in cases:
+            with self.subTest(case=case):
+                html = f'<a href="{raw_href}">Verify account</a>'
+                self.assertIsNone(extract_verification_link(html))
+
+    def test_empty_href_is_skipped_before_valid_action_link(self):
+        href = "https://example.test/confirm?token=XYZ789"
+        html = (
+            '<a href="">Verify account</a>'
+            f'<a href="{href}">Confirm account</a>'
+        )
 
         self.assertEqual(extract_verification_link(html), href)
 
@@ -407,6 +501,32 @@ class VerificationLinkExtractionTest(unittest.TestCase):
             with self.subTest(href=href):
                 html = f'<a href="{href}">Verify account</a>'
                 self.assertIsNone(extract_verification_link(html))
+
+    def test_rejects_empty_ports_and_malformed_host_shapes(self):
+        hrefs = (
+            "https://example.test:/verify",
+            "https://[2001:db8::1]:/verify",
+            "https://example.test:65536/verify",
+            "https://example..test/verify",
+            r"https://example.test\evil/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertIsNone(extract_verification_link(html))
+
+    def test_accepts_ipv6_and_explicit_ports(self):
+        hrefs = (
+            "https://example.test:8443/verify",
+            "https://[2001:db8::1]/verify",
+            "https://[2001:db8::1]:8443/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertEqual(extract_verification_link(html), href)
 
     def test_returns_none_for_non_string_html_without_parsing(self):
         parser_path = (

@@ -88,7 +88,10 @@ collects decoded visible text only from `handle_data()` for bare-URL scanning;
 attribute values never become visible evidence. Anchor candidates and
 bare-text candidates remain separate occurrences even when they have the same
 exact URL, because each occurrence may have different visible text or nearby
-context.
+context. Invisible elements are tracked as a tag stack. A closing invisible
+tag exits hidden state only when it matches the current stack top; mismatched
+closing tags are ignored so malformed markup cannot expose hidden text or
+links.
 
 Bare URLs are recognized with a bounded, linear regular expression beginning
 with `http://` or `https://` and ending at whitespace, quotes, or markup
@@ -103,17 +106,24 @@ current URL nor any neighboring URL can contribute action terms as visible
 text evidence.
 
 HTML character references in visible text are interpreted as the user sees
-them, so `&amp;` becomes `&`. Anchor `href` values retain their parser-provided
-value. No additional URL decoding is performed.
+them, so `&amp;` becomes `&`. Anchor `href` values retain their exact
+parser-provided value from validation through return. Empty values are skipped,
+but surrounding whitespace and control characters are never trimmed; they make
+the complete candidate invalid. No additional URL decoding is performed.
 
 ## Validation And Scoring
 
 Every candidate uses the existing absolute-URL validation:
 
 - Scheme must be `http` or `https`.
-- Hostname must be present and valid.
+- Hostname must be present, contain no literal backslash, and have no empty
+  interior labels such as `example..test`; bracketed IPv6 remains valid.
+- An explicit empty port marker is rejected. Accessing `parsed.port` continues
+  to reject non-numeric and out-of-range ports while ordinary ports remain
+  valid.
 - Embedded username/password values are rejected.
-- Whitespace and control characters are rejected.
+- Whitespace and control characters anywhere in the original candidate are
+  rejected without trimming.
 - Relative, `javascript:`, `data:`, and malformed URLs are rejected.
 
 The existing score remains the basis for selection:
@@ -224,6 +234,12 @@ Add focused service and client tests for:
   entity-encoded verification URL.
 - Attribute values and `head`, `script`, `style`, and `template` content,
   including encoded closing-tag text, never leaking hidden codes.
+- Nested and mismatched invisible closing tags never exposing hidden text,
+  anchor candidates, or verification codes.
+- Anchor `href` values with encoded newlines, tabs, or surrounding spaces being
+  rejected without normalization, while empty hrefs are skipped.
+- Empty ports, consecutive hostname dots, literal host backslashes, and
+  out-of-range ports being rejected while IPv6 and ordinary ports remain valid.
 - A patch-based contract proving visible HTML parsing is deferred when the
   plain-text non-digit pass succeeds.
 
