@@ -112,6 +112,15 @@
     .history-code-result { min-height:18px; max-width:116px; color:var(--muted); font-size:12px; line-height:1.35; overflow-wrap:anywhere; }
     .history-code-result.ok { color:var(--ok); cursor:pointer; font-size:14px; font-weight:700; }
     .history-code-result.err { color:var(--danger); }
+    .verification-link-btn {
+      display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; max-width:100%;
+      padding:5px 9px; border:1px solid var(--border); border-radius:6px; background:var(--secondary-bg);
+      color:white; font-size:12px; font-weight:600; line-height:1.2; text-decoration:none; white-space:nowrap;
+    }
+    .verification-link-btn:hover { background:var(--primary); }
+    .verification-link-btn:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+    .history-link-result { width:116px; max-width:100%; min-height:0; font-size:12px; line-height:1.35; }
+    .history-link-result:empty { display:none; }
     .section-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
     table.copy-table td[data-copy] { cursor: copy; user-select: none; }
     table.copy-table td[data-copy]:hover { background:var(--copy-hover-bg); }
@@ -235,6 +244,7 @@
               <th>发件人</th>
               <th>主题</th>
               <th>收件时间</th>
+              <th>验证链接</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -364,6 +374,7 @@
                 <th>发件人</th>
                 <th>主题</th>
                 <th>收件时间</th>
+                <th>验证链接</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -941,6 +952,29 @@ async function startRegister() {
   }
 }
 
+function appendVerificationLinkAction(container, rawUrl) {
+  if (!container) return false;
+
+  const verificationUrl = String(rawUrl || '').trim();
+  if (!verificationUrl) return false;
+
+  try {
+    const parsedUrl = new URL(verificationUrl);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) return false;
+  } catch (_) {
+    return false;
+  }
+
+  const link = document.createElement('a');
+  link.className = 'verification-link-btn';
+  link.textContent = '打开验证链接';
+  link.href = verificationUrl;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  container.appendChild(link);
+  return true;
+}
+
 async function queryCodeCommon(email, platform, profileId, statusEl, btnEl, tableEl, refreshAccountHistory = false) {
   const status = statusEl;
   const btn = btnEl;
@@ -972,26 +1006,36 @@ async function queryCodeCommon(email, platform, profileId, statusEl, btnEl, tabl
       throw new Error(data.error || '查询失败');
     }
 
-    if (data.code) {
-      status.className = 'status ok';
-      status.textContent = `邮箱 ${email} 已查询到验证码`;
+    const hasCode = !!data.code;
+    const hasVerificationLink = !!data.verification_url;
+
+    if (hasCode || hasVerificationLink) {
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td data-copy="${data.code || ''}">${data.code || ''}</td>
         <td data-copy="${data.sender || ''}">${data.sender || ''}</td>
         <td data-copy="${data.subject || ''}">${data.subject || ''}</td>
         <td data-copy="${data.received_time || ''}">${data.received_time || ''}</td>
+        <td class="verification-link-cell"></td>
       `;
       tbody.appendChild(tr);
+      appendVerificationLinkAction(tr.querySelector('.verification-link-cell'), data.verification_url);
       table.style.display = 'table';
       bindCopyHandlers();
+    }
+
+    if (hasCode) {
+      status.className = 'status ok';
+      status.textContent = `邮箱 ${email} 已查询到验证码`;
       loadQueryHistory(1);
-      if (refreshAccountHistory) loadHistory(historyPage);
+    } else if (hasVerificationLink) {
+      status.className = 'status ok';
+      status.textContent = `邮箱 ${email} 已找到验证链接`;
     } else {
       status.className = 'status';
-      status.textContent = `邮箱 ${email} 暂未查询到验证码`;
-      if (refreshAccountHistory) loadHistory(historyPage);
+      status.textContent = `邮箱 ${email} 暂未查询到验证码或验证链接`;
     }
+    if (refreshAccountHistory) loadHistory(historyPage);
   } catch (e) {
     status.className = 'status err';
     status.textContent = `失败：${e.message || e}`;
@@ -1275,15 +1319,18 @@ async function quickQueryCode(button) {
   const profileId = resolveHistoryProfileId(email, button.dataset.profileId || '');
   const stack = button.closest('.history-code-stack');
   const result = stack?.querySelector('.history-code-result');
+  const linkResult = stack?.querySelector('.history-link-result');
   const row = button.closest('tr');
 
-  if (!email || !result) return;
+  if (!email || !result || !linkResult) return;
 
   button.disabled = true;
+  result.replaceChildren();
+  linkResult.replaceChildren();
   result.className = 'history-code-result';
-  result.textContent = '查询中...';
   result.title = '';
   result.onclick = null;
+  result.textContent = '查询中...';
 
   try {
     const res = await fetch('/api/query-code', {
@@ -1296,7 +1343,10 @@ async function quickQueryCode(button) {
       throw new Error(data.error || '查询失败');
     }
 
-    if (data.code) {
+    const hasCode = !!data.code;
+    const hasVerificationLink = !!data.verification_url;
+
+    if (hasCode) {
       result.className = 'history-code-result ok';
       result.textContent = data.code;
       result.title = '点击复制验证码';
@@ -1304,8 +1354,11 @@ async function quickQueryCode(button) {
       updateHistoryRowUsage(row, email, true);
       loadQueryHistory(1);
     } else {
-      result.textContent = '暂未查到';
+      result.textContent = hasVerificationLink ? '仅发现验证链接' : '暂未查到';
       updateHistoryRowUsage(row, email, false);
+    }
+    if (hasVerificationLink) {
+      appendVerificationLinkAction(linkResult, data.verification_url);
     }
   } catch (e) {
     result.className = 'history-code-result err';
@@ -1377,6 +1430,7 @@ async function loadHistory(page) {
           <div class="history-code-stack">
             <button class="btn-secondary history-code-btn" data-email="${escapeAttr(r.email || '')}" data-profile-id="${escapeAttr(r.profile_id || '')}" onclick="quickQueryCode(this)">查验证码</button>
             <div class="history-code-result"></div>
+            <div class="history-link-result"></div>
           </div>
         </td>
         <td class="history-name-col" data-copy="${name}">${name}</td>
