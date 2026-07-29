@@ -789,6 +789,53 @@ else:
             },
         )
 
+    def test_query_detail_hides_self_closing_invisible_element_content(self):
+        hidden_href = "https://hidden.example.test/verify?token=XYZ789"
+        visible_href = "https://visible.example.test/verify?token=SAFE"
+        cases = (
+            (
+                "matching_close",
+                (
+                    f'<script/>ABC123<a href="{hidden_href}">Verify</a></script>'
+                    f"<p>Activate using {visible_href}</p>"
+                ),
+                visible_href,
+            ),
+            (
+                "no_close",
+                f'<script/>ABC123<a href="{hidden_href}">Verify</a>',
+                None,
+            ),
+        )
+
+        for case, html, expected_url in cases:
+            with self.subTest(case=case):
+                client = CloudMailClient.__new__(CloudMailClient)
+                client._email_list = lambda **_: [
+                    {
+                        "content": html,
+                        "sendEmail": "sender@example.test",
+                        "subject": "Activate your account",
+                        "createTime": "2026-07-29 10:00:00",
+                    }
+                ]
+
+                detail = client.query_verification_detail("a@example.com")
+
+                if expected_url is None:
+                    self.assertIsNone(detail)
+                else:
+                    self.assertEqual(
+                        detail,
+                        {
+                            "code": "",
+                            "verification_url": expected_url,
+                            "sender": "sender@example.test",
+                            "subject": "Activate your account",
+                            "received_time": "2026-07-29 10:00:00",
+                        },
+                    )
+
     def test_query_detail_uses_literal_url_masking_for_plain_text(self):
         href = (
             "https://example.test/verify?x=1"
@@ -815,6 +862,39 @@ else:
             },
         )
 
+    def test_query_detail_masks_literal_urls_in_subject_before_code_extraction(self):
+        self.write_config(
+            {
+                "verification_code_rules": {
+                    "enabled_presets": [],
+                    "custom_patterns": [
+                        {
+                            "name": "Subject code",
+                            "pattern": r"(?:code: |token=)([A-Z0-9]{6})",
+                        }
+                    ],
+                }
+            }
+        )
+        href = "https://example.test/verify?token=ABC123"
+        cases = (
+            (f"Activate using {href}", None),
+            (f"Verification code: XYZ789. Activate using {href}", "XYZ789"),
+        )
+
+        for subject, expected_code in cases:
+            with self.subTest(subject=subject):
+                client = CloudMailClient.__new__(CloudMailClient)
+                client._email_list = lambda **_: [{"subject": subject}]
+
+                detail = client.query_verification_detail("a@example.com")
+
+                if expected_code is None:
+                    self.assertIsNone(detail)
+                else:
+                    self.assertEqual(detail["code"], expected_code)
+                    self.assertEqual(detail["subject"], subject)
+
     def test_query_detail_defers_body_masking_when_subject_matches(self):
         self.write_config(
             {
@@ -840,7 +920,10 @@ else:
         ]
 
         with (
-            patch("cloud_mail_client.mask_http_urls", return_value="") as mask_urls,
+            patch(
+                "cloud_mail_client.mask_http_urls",
+                side_effect=lambda value: value,
+            ) as mask_urls,
             patch(
                 "cloud_mail_client.extract_verification_link",
                 return_value=None,
@@ -848,7 +931,7 @@ else:
         ):
             detail = client.query_verification_detail("a@example.com")
 
-        mask_urls.assert_not_called()
+        mask_urls.assert_called_once_with("subject-token: ABC123")
         extract_link.assert_called_once_with(large_body, large_body)
         self.assertEqual(detail["code"], "ABC123")
 
@@ -887,7 +970,10 @@ else:
             detail = client.query_verification_detail("a@example.com")
 
         visible_html.assert_not_called()
-        mask_urls.assert_called_once_with(text)
+        self.assertEqual(
+            mask_urls.call_args_list,
+            [call("Verification message"), call(text)],
+        )
         self.assertEqual(detail["code"], "ABC123")
 
     def test_query_detail_preserves_lazy_body_extraction_order(self):
@@ -922,19 +1008,19 @@ else:
         extract_visible.assert_called_once_with(html)
         self.assertEqual(
             mask_urls.call_args_list,
-            [call(text), call(visible_html)],
+            [call(subject), call(text), call(visible_html)],
         )
         self.assertEqual(
             extract_code.call_args_list,
             [
                 call(
-                    subject,
+                    f"masked:{subject}",
                     allow_digits=False,
                     rules=ANY,
                     custom_pattern_deadline=ANY,
                 ),
                 call(
-                    subject,
+                    f"masked:{subject}",
                     allow_digits=True,
                     rules=ANY,
                     custom_pattern_deadline=ANY,

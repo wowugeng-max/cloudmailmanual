@@ -38,6 +38,7 @@ from .repositories.verification_rules import (
 )
 from .services.domains import generate_domain_bodies, generate_third_level_subdomains
 from .services.registration import batch_register
+from .services.verification_links import mask_http_urls
 
 
 def register_routes(app):
@@ -326,10 +327,13 @@ def register_routes(app):
                     **normalized_detail,
                 })
 
+            history_subject = " ".join(
+                mask_http_urls(normalized_detail["subject"]).split()
+            )
             save_verification_query(email, {
                 "code": normalized_detail["code"],
                 "sender": normalized_detail["sender"],
-                "subject": normalized_detail["subject"],
+                "subject": history_subject,
                 "received_time": normalized_detail["received_time"],
             })
     

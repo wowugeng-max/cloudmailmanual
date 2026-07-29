@@ -375,6 +375,49 @@ class VerificationRulesApiTest(unittest.TestCase):
             "a@example.com", used=True, platform="Test"
         )
 
+    def test_url_bearing_subject_is_masked_only_in_saved_history(self):
+        href = "https://example.test/confirm?token=ABC123"
+        subject = f"Verification code: 654321\n  Activate using {href}  now"
+        self.login()
+
+        with (
+            patch.object(routes, "CloudMailClient") as client_class,
+            patch.object(routes, "save_verification_query") as save_query,
+            patch.object(routes, "mark_account_used") as mark_used,
+        ):
+            client_class.return_value.query_verification_detail.return_value = {
+                "code": "654321",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": subject,
+                "received_time": "2026-07-29 10:00:00",
+            }
+            response = self.client.post(
+                "/api/query-code",
+                json={"email": "a@example.com", "platform": "Test"},
+            )
+
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["verification_url"], href)
+        self.assertEqual(data["subject"], subject)
+        save_query.assert_called_once_with(
+            "a@example.com",
+            {
+                "code": "654321",
+                "sender": "sender@example.test",
+                "subject": "Verification code: 654321 Activate using now",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+        saved_subject = save_query.call_args.args[1]["subject"]
+        self.assertNotIn("http", saved_subject)
+        self.assertNotIn("token=", saved_subject)
+        self.assertNotIn("ABC123", repr(save_query.call_args.args[1]))
+        mark_used.assert_called_once_with(
+            "a@example.com", used=True, platform="Test"
+        )
+
     def test_code_only_query_normalizes_missing_link_and_marks_used(self):
         self.login()
 

@@ -499,12 +499,15 @@ if not normalized_detail["code"]:
         **normalized_detail,
     })
 
+history_subject = " ".join(
+    mask_http_urls(normalized_detail["subject"]).split()
+)
 save_verification_query(
     email,
     {
         "code": normalized_detail["code"],
         "sender": normalized_detail["sender"],
-        "subject": normalized_detail["subject"],
+        "subject": history_subject,
         "received_time": normalized_detail["received_time"],
     },
 )
@@ -520,7 +523,10 @@ return jsonify({
 })
 ```
 
-This keeps the existing code behavior, returns a link alongside a code, and guarantees that `verification_url` is never passed to `save_verification_query()`.
+This keeps the existing code behavior, returns a link alongside a code, and
+guarantees that neither `verification_url` nor a literal HTTP(S) URL embedded
+in the persisted subject reaches `save_verification_query()`. The API response
+continues to expose the original subject.
 
 - [ ] **Step 3: Run focused and regression API tests**
 

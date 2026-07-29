@@ -266,19 +266,20 @@ class CloudMailClient:
         custom_pattern_deadline = time.monotonic() + VERIFICATION_QUERY_BUDGET_SECONDS
         for row in rows:
             subject = str(row.get("subject") or "")
+            code_subject = mask_http_urls(subject)
             text = str(row.get("text") or "")
             html = str(row.get("content") or "")
 
             # 先查主题：先不允许纯数字，再允许纯数字
             code = self.extract_verification_code(
-                subject,
+                code_subject,
                 allow_digits=False,
                 rules=rules,
                 custom_pattern_deadline=custom_pattern_deadline,
             )
             if not code:
                 code = self.extract_verification_code(
-                    subject,
+                    code_subject,
                     allow_digits=True,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,

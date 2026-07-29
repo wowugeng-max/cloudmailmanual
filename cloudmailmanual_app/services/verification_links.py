@@ -111,7 +111,10 @@ class _AnchorParser(HTMLParser):
         attrs: List[Tuple[str, Optional[str]]],
     ) -> None:
         normalized_tag = tag.casefold()
-        if normalized_tag in _INVISIBLE_TAGS or self._invisible_tags:
+        if normalized_tag in _INVISIBLE_TAGS:
+            self._invisible_tags.append(normalized_tag)
+            return
+        if self._invisible_tags:
             return
         if normalized_tag != "a":
             return
@@ -277,13 +280,23 @@ def _url_evidence(parsed: SplitResult) -> Tuple[str, ...]:
 
 def _trim_bare_url_candidate(value: str) -> str:
     trimmed = value.rstrip(_TRAILING_SENTENCE_PUNCTUATION)
-    while trimmed and trimmed[-1] in _CLOSING_BRACKETS:
-        closing = trimmed[-1]
+    opening_counts = {opening: 0 for opening in _CLOSING_BRACKETS.values()}
+    closing_counts = {closing: 0 for closing in _CLOSING_BRACKETS}
+    for character in trimmed:
+        if character in opening_counts:
+            opening_counts[character] += 1
+        elif character in closing_counts:
+            closing_counts[character] += 1
+
+    end = len(trimmed)
+    while end and trimmed[end - 1] in _CLOSING_BRACKETS:
+        closing = trimmed[end - 1]
         opening = _CLOSING_BRACKETS[closing]
-        if trimmed.count(opening) >= trimmed.count(closing):
+        if opening_counts[opening] >= closing_counts[closing]:
             break
-        trimmed = trimmed[:-1]
-    return trimmed
+        closing_counts[closing] -= 1
+        end -= 1
+    return trimmed if end == len(trimmed) else trimmed[:end]
 
 
 def _literal_http_url_spans(value: str) -> List[Tuple[int, int]]:

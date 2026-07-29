@@ -5,6 +5,27 @@ from cloudmailmanual_app.services import verification_links
 from cloudmailmanual_app.services.verification_links import extract_verification_link
 
 
+class _OperationCountingStr(str):
+    def __new__(cls, value, operations=None):
+        instance = super().__new__(cls, value)
+        instance.operations = operations or {"count": 0, "slice": 0}
+        return instance
+
+    def rstrip(self, chars=None):
+        return type(self)(super().rstrip(chars), self.operations)
+
+    def count(self, *args, **kwargs):
+        self.operations["count"] += 1
+        return super().count(*args, **kwargs)
+
+    def __getitem__(self, key):
+        result = super().__getitem__(key)
+        if isinstance(key, slice):
+            self.operations["slice"] += 1
+            return type(self)(result, self.operations)
+        return result
+
+
 class VerificationLinkExtractionTest(unittest.TestCase):
     def test_mask_http_urls_replaces_matches_with_equal_length_spaces(self):
         href = "https://example.test/verify-email?token=ABC123"
@@ -117,6 +138,29 @@ class VerificationLinkExtractionTest(unittest.TestCase):
 
         for case, html in cases:
             with self.subTest(case=case):
+                self.assertIsNone(extract_verification_link(html))
+
+    def test_self_closing_invisible_tags_hide_content_until_matching_end_or_eof(self):
+        href = "https://example.test/verify?token=XYZ789"
+
+        for tag in ("head", "script", "style", "template"):
+            with self.subTest(tag=tag, closing=True):
+                html = (
+                    f'<{tag}/>ABC123<a href="{href}">Verify</a></{tag}>'
+                    "<p>Visible</p>"
+                )
+                self.assertEqual(
+                    verification_links.extract_visible_html_text(html),
+                    "Visible",
+                )
+                self.assertIsNone(extract_verification_link(html))
+
+            with self.subTest(tag=tag, closing=False):
+                html = f'<{tag}/>ABC123<a href="{href}">Verify</a>'
+                self.assertEqual(
+                    verification_links.extract_visible_html_text(html),
+                    "",
+                )
                 self.assertIsNone(extract_verification_link(html))
 
     def test_mask_http_urls_only_masks_literal_http_urls(self):
@@ -271,6 +315,28 @@ class VerificationLinkExtractionTest(unittest.TestCase):
         text = f"Activate your account here ({href})."
 
         self.assertEqual(extract_verification_link("", text), href)
+
+    def test_trim_bare_url_candidate_uses_bounded_counts_and_slices(self):
+        href = "https://example.test/verify?token=synthetic-value"
+        candidate = _OperationCountingStr(f"{href}{')' * 512}")
+
+        trimmed = verification_links._trim_bare_url_candidate(candidate)
+
+        self.assertEqual(trimmed, href)
+        self.assertLessEqual(candidate.operations["count"], 6)
+        self.assertLessEqual(candidate.operations["slice"], 1)
+
+    def test_trims_many_unmatched_closing_brackets_without_overtrimming(self):
+        href = "https://example.test/verify?token=synthetic-value"
+        text = f"Activate using {href}{')' * 4096}"
+        balanced_href = f"{href}/(step)"
+        mixed_text = f"Activate using {balanced_href})]"
+
+        self.assertEqual(extract_verification_link("", text), href)
+        self.assertEqual(
+            extract_verification_link("", mixed_text),
+            balanced_href,
+        )
 
     def test_does_not_reconstruct_bare_url_across_whitespace(self):
         text = "Activate using https://\nexample.test/verify?token=synthetic-value"

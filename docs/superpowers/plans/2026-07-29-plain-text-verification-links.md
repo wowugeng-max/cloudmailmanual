@@ -224,7 +224,9 @@ This preserves nested visible anchor labels while excluding `head`, `script`,
 derived only from `handle_data()` and must never include attributes. Push every
 invisible start tag onto `_invisible_tags`; an invisible end tag may pop only
 when it matches the stack top. Ignore mismatched closers so malformed markup
-cannot lower hidden state.
+cannot lower hidden state. Treat self-closing `head`, `script`, `style`, and
+`template` tags as opening tags too, keeping subsequent content hidden until a
+matching end tag or EOF.
 
 - [ ] **Step 4: Add conservative bare-URL cleanup and context helpers**
 
@@ -233,13 +235,23 @@ Place these helpers before `_score()`:
 ```python
 def _trim_bare_url_candidate(value: str) -> str:
     trimmed = value.rstrip(_TRAILING_SENTENCE_PUNCTUATION)
-    while trimmed and trimmed[-1] in _CLOSING_BRACKETS:
-        closing = trimmed[-1]
+    opening_counts = {opening: 0 for opening in _CLOSING_BRACKETS.values()}
+    closing_counts = {closing: 0 for closing in _CLOSING_BRACKETS}
+    for character in trimmed:
+        if character in opening_counts:
+            opening_counts[character] += 1
+        elif character in closing_counts:
+            closing_counts[character] += 1
+
+    end = len(trimmed)
+    while end and trimmed[end - 1] in _CLOSING_BRACKETS:
+        closing = trimmed[end - 1]
         opening = _CLOSING_BRACKETS[closing]
-        if trimmed.count(opening) >= trimmed.count(closing):
+        if opening_counts[opening] >= closing_counts[closing]:
             break
-        trimmed = trimmed[:-1]
-    return trimmed
+        closing_counts[closing] -= 1
+        end -= 1
+    return trimmed if end == len(trimmed) else trimmed[:end]
 
 
 def _bare_url_candidates(value: str) -> List[_Anchor]:
@@ -568,6 +580,7 @@ whole-document `html.unescape()` processing.
 Within each message loop iteration, create body values lazily:
 
 ```python
+code_subject = mask_http_urls(subject)
 code_text = mask_http_urls(text)
 visible_html = extract_visible_html_text(html)
 code_html = mask_http_urls(visible_html)
@@ -575,12 +588,13 @@ code_html = mask_http_urls(visible_html)
 
 Add a default-compatible `content_is_plain_text=False` argument to
 `extract_verification_code()`. Use `True` for `code_text` and `code_html` so a
-visible literal such as `<ABC123>` is not removed as markup. Keep subject
-extraction unchanged and preserve this exact order: subject non-digits,
-subject digits, text non-digits, visible HTML non-digits, text digits, visible
-HTML digits. Do not call `extract_visible_html_text()` when text non-digits
-already matched. Continue calling `extract_verification_link(html, text)` with
-the original bodies.
+visible literal such as `<ABC123>` is not removed as markup. Reuse the single
+`code_subject` value for both subject passes while retaining the original
+subject for the API response. Preserve this exact order: masked-subject
+non-digits, masked-subject digits, text non-digits, visible HTML non-digits,
+text digits, visible HTML digits. Do not call `extract_visible_html_text()`
+when text non-digits already matched. Continue calling
+`extract_verification_link(html, text)` with the original bodies.
 
 - [ ] **Step 4: Verify and commit**
 
@@ -644,6 +658,8 @@ Expected:
 - The worktree contains only intended commits and no uncommitted files.
 - No parser code calls a network client or URL decoder.
 - `verification_url` remains excluded from `save_verification_query()` input.
+- Literal HTTP(S) URLs are masked from the persisted subject and its remaining
+  whitespace is normalized, while the API still returns the original subject.
 - Test URLs contain only synthetic or explicitly redacted token values.
 
 - [ ] **Step 4: Inspect the final commit range**
@@ -670,6 +686,8 @@ The reviewer must inspect the complete `origin/main...HEAD` range for parser fal
 - [x] The plan masks every URL span from nearby text evidence, preserving opaque-token false-positive protection across repeated links.
 - [x] Repeated `href` occurrences with different contexts remain independent, while exact duplicate `(href, text)` evidence is scored once and collection order breaks ties.
 - [x] Absolute-URL validation and parsed URL evidence are cached once per `href` within each extraction call.
-- [x] Existing callers remain compatible through the optional `raw_text` argument.
-- [x] No route, database, UI, Webmail, network, decoding, or persistence changes are introduced.
+- [x] Existing callers remain compatible through the optional
+  `content_is_plain_text` argument.
+- [x] The route sanitizes subject URLs only at the history persistence boundary;
+  database schema, UI, Webmail, network, and decoding behavior remain unchanged.
 - [x] The final task verifies the entire pre-existing verification-link feature before merging to `main`.

@@ -61,8 +61,10 @@ def extract_visible_html_text(raw_html: str) -> str:
 
 This helper uses stdlib `HTMLParser` with character-reference conversion and
 collects only real `handle_data()` output. It excludes `head`, `script`,
-`style`, and `template` content and never scans attributes. There is no raw
-HTML span mapping or whole-document `html.unescape()` step.
+`style`, and `template` content and never scans attributes. A self-closing form
+of any invisible tag is treated conservatively as an opening tag and keeps
+content hidden until a matching end tag or EOF. There is no raw HTML span
+mapping or whole-document `html.unescape()` step.
 
 The service also exports a shared body-masking helper:
 
@@ -97,7 +99,10 @@ Bare URLs are recognized with a bounded, linear regular expression beginning
 with `http://` or `https://` and ending at whitespace, quotes, or markup
 delimiters. Candidate cleanup may remove only common sentence punctuation and
 unmatched closing brackets at the end. It must not alter query parameters,
-fragments, percent escapes, JWT-like values, or internal punctuation.
+fragments, percent escapes, JWT-like values, or internal punctuation. Closing
+brackets are counted in one forward pass and trimmed in one backward pass with
+at most one final slice. Trimming stops as soon as the final closing bracket is
+balanced, preserving the existing conservative behavior.
 
 Before nearby context is sliced, every literal URL match in plain text or
 parser-produced visible HTML text is replaced with equal-length spaces in a
@@ -164,9 +169,11 @@ its visible label is the URL itself.
 ## Client Integration
 
 For each message, `CloudMailClient.query_verification_detail()` masks plain
-text directly and parses HTML into decoded visible text before masking:
+subject and plain text directly and parses HTML into decoded visible text
+before masking:
 
 ```python
+code_subject = mask_http_urls(subject)
 code_text = mask_http_urls(text)
 visible_html = extract_visible_html_text(html)
 code_html = mask_http_urls(visible_html)
@@ -178,12 +185,14 @@ HTML-cleaning behavior; parser-produced HTML text and the message's plain-text
 body pass `content_is_plain_text=True`, so visible literals such as
 `<ABC123>` are not mistaken for tags and removed.
 
-Subject extraction remains completely unchanged. Body extraction stays lazy
-and keeps this exact order: subject non-digits, subject digits, plain-text
-non-digits, visible-HTML non-digits, plain-text digits, visible-HTML digits.
-Visible HTML is not parsed when the plain-text non-digit pass succeeds. This
-prevents values such as `token=ABC123` inside an HTTP(S) URL from winning as an
-OTP while preserving a real code such as `654321` outside the URL.
+The masked subject is computed once and reused for both subject passes, while
+the original subject is retained for the API response. Body extraction stays
+lazy and keeps this exact order: masked-subject non-digits, masked-subject
+digits, plain-text non-digits, visible-HTML non-digits, plain-text digits,
+visible-HTML digits. Visible HTML is not parsed when the plain-text non-digit
+pass succeeds. This prevents values such as `token=ABC123` inside an HTTP(S)
+URL from winning as an OTP while preserving a real code such as `654321`
+outside the URL.
 
 Link extraction continues to receive the original, untouched bodies:
 
@@ -193,10 +202,12 @@ verification_url = extract_verification_link(html, text) or ""
 
 Code extraction order remains unchanged. A link-only message still returns an
 empty `code`, is not saved to verification history, and leaves the account
-unused. A code-plus-link message still saves only code metadata and marks the
-account used.
+unused. A code-plus-link message still saves code metadata and marks the
+account used. Before history persistence, literal HTTP(S) URLs in the subject
+are replaced with spaces and whitespace is normalized; the API response still
+returns the original subject.
 
-No route, database schema, or UI contract changes are required.
+No database schema or UI contract changes are required.
 
 ## Security And Privacy
 
