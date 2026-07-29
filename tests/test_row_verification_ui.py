@@ -1,4 +1,3 @@
-import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -74,247 +73,364 @@ class RowVerificationUiTest(unittest.TestCase):
             self.assertTrue(table_marker in html, f"missing {table_id}")
             table = html.split(table_marker, 1)[1].split("</table>", 1)[0]
             table_header = table.split("</thead>", 1)[0]
-            self.assertIn("验证链接", table_header)
-
-        query_marker = "async function queryCodeCommon"
-        self.assertTrue(query_marker in html, "missing queryCodeCommon")
-        query_renderer = html.split(query_marker, 1)[1].split(
-            "async function queryCode", 1
-        )[0]
-        self.assertTrue(
-            'class="verification-link-cell"' in query_renderer,
-            "top query row must include verification-link-cell",
-        )
-
-    def test_verification_link_renderer_assigns_safe_dom_properties(self):
-        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
-        helper_marker = "function appendVerificationLinkAction"
-        self.assertTrue(helper_marker in html, "missing verification link helper")
-        helper_tail = html.split(helper_marker, 1)[1]
-        self.assertTrue(
-            "async function queryCodeCommon" in helper_tail,
-            "missing queryCodeCommon after verification link helper",
-        )
-        helper = helper_marker + helper_tail.split(
-            "async function queryCodeCommon", 1
-        )[0]
-        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
-
-        signature = re.search(
-            rf"function\s+appendVerificationLinkAction\s*\(\s*"
-            rf"({identifier})\s*,\s*({identifier})",
-            helper,
-        )
-        self.assertTrue(signature is not None, "missing helper container parameter")
-        container_name = signature.group(1)
-
-        anchor_match = re.search(
-            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
-            r"document\.createElement\(\s*['\"]a['\"]\s*\)",
-            helper,
-        )
-        self.assertTrue(anchor_match is not None, "helper must create an anchor")
-        anchor_name = anchor_match.group(1)
-
-        href_match = re.search(
-            rf"\b{re.escape(anchor_name)}\.href\s*=\s*"
-            rf"({identifier})\s*;?",
-            helper,
-        )
-        self.assertTrue(href_match is not None, "helper must assign anchor href")
-        href_value = href_match.group(1)
-
-        for property_name, value in (
-            ("target", "_blank"),
-            ("rel", "noopener noreferrer"),
-            ("textContent", "打开验证链接"),
-        ):
-            self.assertRegex(
-                helper,
-                rf"\b{re.escape(anchor_name)}\.{property_name}\s*=\s*"
-                rf"['\"]{re.escape(value)}['\"]\s*;?",
+            self.assertTrue(
+                "验证链接" in table_header,
+                f"{table_id} must include a verification link header",
             )
 
-        self.assertRegex(
-            helper,
-            rf"new\s+URL\(\s*{re.escape(href_value)}\s*\)",
-        )
-        self.assertRegex(
-            helper,
-            rf"\[\s*['\"]http:['\"]\s*,\s*['\"]https:['\"]\s*\]"
-            rf"\s*\.includes\(\s*{identifier}\.protocol\s*\)",
-        )
-        append_match = re.search(
-            rf"\b{re.escape(container_name)}\.(?:appendChild|append)\(\s*"
-            rf"{re.escape(anchor_name)}\s*\)\s*;?",
-            helper,
-        )
+    def test_verification_link_helper_is_declared(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
         self.assertTrue(
-            append_match is not None,
-            "helper must append the anchor to its container",
-        )
-
-        self.assertTrue("innerHTML" not in helper, "helper must not use innerHTML")
-        self.assertTrue("onclick" not in helper, "helper must not use onclick")
-        dangerous_inner_html = re.search(
-            r"\.innerHTML\s*=\s*`[^`]*(?:verification_url|verificationUrl)[^`]*`",
-            html,
-            re.DOTALL,
-        )
-        self.assertTrue(
-            dangerous_inner_html is None,
-            "verification URL must not enter an innerHTML template",
-        )
-        dangerous_inline_onclick = re.search(
-            r'onclick\s*=\s*["\'][^"\']*(?:verification_url|verificationUrl)'
-            r'[^"\']*["\']',
-            html,
-            re.DOTALL,
-        )
-        self.assertTrue(
-            dangerous_inline_onclick is None,
-            "verification URL must not enter inline onclick",
+            "function appendVerificationLinkAction" in html,
+            "missing verification link helper",
         )
 
     def test_row_shortcut_has_separate_link_result_container(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
-        history_renderer = html.split("async function loadHistory", 1)[1].split(
+        history_marker = "async function loadHistory"
+        self.assertTrue(history_marker in html, "missing history row renderer")
+        history_renderer = html.split(history_marker, 1)[1].split(
             "async function setUsed", 1
-        )[0]
-        quick_query = html.split("async function quickQueryCode", 1)[1].split(
-            "async function loadHistory", 1
         )[0]
 
         self.assertTrue(
             'class="history-link-result"' in history_renderer,
             "history row must include a separate link result container",
         )
-        link_call_pattern = (
-            r"appendVerificationLinkAction\s*\([^;]*?,\s*"
-            r"data\.verification_url\s*,?\s*\)"
-        )
-        link_calls = list(re.finditer(link_call_pattern, quick_query, re.DOTALL))
-        self.assertEqual(len(link_calls), 1, "quick query must append one link action")
-        remaining = quick_query
-        for allowed_pattern in (
-            link_call_pattern,
-            r"!!\s*data\.verification_url",
-            r"Boolean\(\s*data\.verification_url\s*\)",
-            r"if\s*\(\s*data\.verification_url\s*\)",
-        ):
-            remaining = re.sub(allowed_pattern, "", remaining, flags=re.DOTALL)
-        self.assertTrue(
-            "data.verification_url" not in remaining,
-            "quick query must only check or append data.verification_url",
-        )
 
-        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
-        code_alias = re.search(
-            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
-            r"(?:!!\s*data\.code|Boolean\(\s*data\.code\s*\))",
-            quick_query,
-        )
-        code_expression = re.escape(code_alias.group(1)) if code_alias else r"data\.code"
-        guard = re.search(
-            rf"\bif\s*\(\s*{code_expression}\s*\)", quick_query
-        )
-        self.assertTrue(guard is not None, "quick query needs a code-only branch")
-        history_loads = list(re.finditer(r"loadQueryHistory\(1\)", quick_query))
-        self.assertEqual(len(history_loads), 1, "quick query must load history once")
-        self.assertLess(
-            link_calls[0].end(),
-            guard.start(),
-            "quick query must append the link before checking for code",
-        )
-        self.assertLess(
-            guard.end(),
-            history_loads[0].start(),
-            "quick query history load must stay inside the code path",
-        )
-        self.assertEqual(
-            len(
-                re.findall(
-                    r"updateHistoryRowUsage\(\s*row\s*,\s*email\s*,\s*false\s*\)",
-                    quick_query,
-                )
-            ),
-            1,
-            "link-only quick query must keep account usage false",
-        )
-
-    def test_top_query_handles_link_only_results(self):
+    def test_verification_link_runtime_contract(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
-        query_common = html.split("async function queryCodeCommon", 1)[1].split(
-            "async function queryCode", 1
-        )[0]
-        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
-        code_alias = re.search(
-            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
-            r"(?:!!\s*data\.code|Boolean\(\s*data\.code\s*\))",
-            query_common,
-        )
-        link_alias = re.search(
-            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
-            r"(?:!!\s*data\.verification_url|"
-            r"Boolean\(\s*data\.verification_url\s*\))",
-            query_common,
-        )
-        result_guard = re.search(
-            r"\bif\s*\(\s*data\.code\s*\|\|\s*"
-            r"data\.verification_url\s*\)",
-            query_common,
-        )
-        if result_guard is None and code_alias and link_alias:
-            result_guard = re.search(
-                rf"\bif\s*\(\s*{re.escape(code_alias.group(1))}\s*\|\|\s*"
-                rf"{re.escape(link_alias.group(1))}\s*\)",
-                query_common,
-            )
-        self.assertTrue(result_guard is not None, "top query must accept code or link")
-        self.assertIn("已找到验证链接", query_common)
-        link_call_pattern = (
-            r"appendVerificationLinkAction\s*\([^;]*?,\s*"
-            r"data\.verification_url\s*,?\s*\)"
-        )
-        link_calls = list(re.finditer(link_call_pattern, query_common, re.DOTALL))
-        self.assertEqual(len(link_calls), 1, "top query must append one link action")
-        remaining = query_common
-        for allowed_pattern in (
-            link_call_pattern,
-            r"!!\s*data\.verification_url",
-            r"Boolean\(\s*data\.verification_url\s*\)",
-            r"data\.code\s*\|\|\s*data\.verification_url",
-        ):
-            remaining = re.sub(allowed_pattern, "", remaining, flags=re.DOTALL)
-        self.assertTrue(
-            "data.verification_url" not in remaining,
-            "top query must only check or append data.verification_url",
+        main_script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const assert = require('assert');
+
+const source = fs.readFileSync(0, 'utf8');
+const safeUrl = 'https://verify.example/path?token=runtime-secret';
+const innerHTMLWrites = [];
+const attributeWrites = [];
+const handlerWrites = [];
+
+const matchesSelector = (element, selector) => {
+  if (selector.startsWith('.')) {
+    const className = selector.slice(1);
+    return String(element.className || '').split(/\s+/).includes(className);
+  }
+  return element.tagName.toLowerCase() === selector.toLowerCase();
+};
+
+const findDescendants = (element, selector) => {
+  const matches = [];
+  for (const child of element.children) {
+    if (matchesSelector(child, selector)) matches.push(child);
+    matches.push(...findDescendants(child, selector));
+  }
+  return matches;
+};
+
+const makeElement = (tagName = 'div') => {
+  let innerHTML = '';
+  let onclick = null;
+  const attributes = {};
+  const closestElements = {};
+  const element = {
+    tagName: String(tagName).toUpperCase(),
+    nodeName: String(tagName).toUpperCase(),
+    className: '',
+    textContent: '',
+    href: '',
+    target: '',
+    rel: '',
+    title: '',
+    value: '',
+    disabled: false,
+    dataset: {},
+    style: {},
+    children: [],
+    parentNode: null,
+    appendChild(child) {
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    },
+    append(...children) {
+      children.forEach((child) => this.appendChild(child));
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      children.forEach((child) => this.appendChild(child));
+    },
+    querySelector(selector) {
+      return findDescendants(this, selector)[0] || null;
+    },
+    querySelectorAll(selector) {
+      return findDescendants(this, selector);
+    },
+    closest(selector) {
+      return closestElements[selector] || null;
+    },
+    setClosest(selector, target) {
+      closestElements[selector] = target;
+    },
+    setAttribute(name, value) {
+      const normalizedName = String(name);
+      const normalizedValue = String(value);
+      attributes[normalizedName] = normalizedValue;
+      attributeWrites.push({ name: normalizedName, value: normalizedValue });
+      if (/^on/i.test(normalizedName)) {
+        handlerWrites.push({ name: normalizedName, value: normalizedValue });
+      }
+      if (normalizedName === 'class') this.className = normalizedValue;
+      if (normalizedName === 'href') this.href = normalizedValue;
+    },
+    getAttribute(name) {
+      return attributes[String(name)] || null;
+    },
+  };
+
+  element.classList = {
+    add(...names) {
+      const values = new Set(String(element.className || '').split(/\s+/).filter(Boolean));
+      names.forEach((name) => values.add(name));
+      element.className = Array.from(values).join(' ');
+    },
+    remove(...names) {
+      const blocked = new Set(names);
+      element.className = String(element.className || '')
+        .split(/\s+/)
+        .filter((name) => name && !blocked.has(name))
+        .join(' ');
+    },
+    toggle(name, force) {
+      const values = new Set(String(element.className || '').split(/\s+/).filter(Boolean));
+      const enabled = force === undefined ? !values.has(name) : !!force;
+      if (enabled) values.add(name);
+      else values.delete(name);
+      element.className = Array.from(values).join(' ');
+      return enabled;
+    },
+  };
+
+  Object.defineProperty(element, 'innerHTML', {
+    get() { return innerHTML; },
+    set(value) {
+      innerHTML = String(value);
+      innerHTMLWrites.push({ element, value: innerHTML });
+      element.children = [];
+      if (innerHTML.includes('verification-link-cell')) {
+        const cell = makeElement('td');
+        cell.className = 'verification-link-cell';
+        element.appendChild(cell);
+      }
+    },
+  });
+  Object.defineProperty(element, 'onclick', {
+    get() { return onclick; },
+    set(value) {
+      onclick = value;
+      handlerWrites.push({ name: 'onclick', value: String(value) });
+    },
+  });
+  return element;
+};
+
+const document = {
+  documentElement: { dataset: {} },
+  body: makeElement('body'),
+  getElementById() { return null; },
+  querySelector() { return null; },
+  querySelectorAll() { return []; },
+  createElement(tagName) { return makeElement(tagName); },
+  execCommand() { return true; },
+};
+const windowObject = { addEventListener() {} };
+const context = vm.createContext({
+  document,
+  window: windowObject,
+  console,
+  URL,
+  URLSearchParams,
+  setTimeout,
+  clearTimeout,
+  navigator: {},
+});
+vm.runInContext(source, context);
+
+context.__onHistoryLoad = () => {};
+context.__onUsageUpdate = () => {};
+vm.runInContext(`
+  bindCopyHandlers = () => {};
+  loadHistory = () => {};
+  loadQueryHistory = (...args) => __onHistoryLoad(...args);
+  updateHistoryRowUsage = (...args) => __onUsageUpdate(...args);
+  resolveHistoryProfileId = () => 'profile-1';
+`, context);
+
+const assertAnchor = (container, label) => {
+  assert.strictEqual(container.children.length, 1, `${label} should contain one anchor`);
+  const anchor = container.children[0];
+  assert.strictEqual(anchor.tagName, 'A', `${label} should append an A node`);
+  assert.strictEqual(anchor.href, safeUrl);
+  assert.strictEqual(anchor.target, '_blank');
+  assert.strictEqual(anchor.rel, 'noopener noreferrer');
+  assert.strictEqual(anchor.textContent, '打开验证链接');
+  return anchor;
+};
+
+const installFetch = (payload) => {
+  context.fetch = async () => ({
+    ok: true,
+    json: async () => payload,
+  });
+};
+
+const makeTopSurface = () => {
+  const table = makeElement('table');
+  const tbody = makeElement('tbody');
+  table.appendChild(tbody);
+  return {
+    table,
+    tbody,
+    status: makeElement('div'),
+    button: makeElement('button'),
+  };
+};
+
+const runTopQuery = async (payload, label) => {
+  const surface = makeTopSurface();
+  let historyLoads = 0;
+  context.__onHistoryLoad = () => { historyLoads += 1; };
+  installFetch(payload);
+  context.__topStatus = surface.status;
+  context.__topButton = surface.button;
+  context.__topTable = surface.table;
+  await vm.runInContext(
+    "queryCodeCommon('top@example.com', '', 'profile-1', " +
+      "__topStatus, __topButton, __topTable, false)",
+    context,
+  );
+  const linkCell = surface.tbody.querySelector('.verification-link-cell');
+  assert.ok(linkCell, `${label} should create verification-link-cell`);
+  assertAnchor(linkCell, label);
+  return { surface, historyLoads };
+};
+
+const makeQuickSurface = () => {
+  const row = makeElement('tr');
+  const stack = makeElement('div');
+  const codeResult = makeElement('div');
+  const linkResult = makeElement('div');
+  const button = makeElement('button');
+  stack.className = 'history-code-stack';
+  codeResult.className = 'history-code-result';
+  linkResult.className = 'history-link-result';
+  stack.appendChild(codeResult);
+  stack.appendChild(linkResult);
+  row.appendChild(stack);
+  button.dataset.email = 'row@example.com';
+  button.dataset.profileId = 'profile-1';
+  button.setClosest('.history-code-stack', stack);
+  button.setClosest('tr', row);
+  return { row, stack, codeResult, linkResult, button };
+};
+
+const runQuickQuery = async (payload, expectedUsed, expectedHistoryLoads, label) => {
+  const surface = makeQuickSurface();
+  let historyLoads = 0;
+  const usageUpdates = [];
+  context.__onHistoryLoad = () => { historyLoads += 1; };
+  context.__onUsageUpdate = (row, email, used) => {
+    usageUpdates.push({ row, email, used });
+  };
+  installFetch(payload);
+  context.__quickButton = surface.button;
+  await vm.runInContext('quickQueryCode(__quickButton)', context);
+  assertAnchor(surface.linkResult, label);
+  assert.strictEqual(usageUpdates.length, 1, `${label} should update usage once`);
+  assert.strictEqual(usageUpdates[0].row, surface.row);
+  assert.strictEqual(usageUpdates[0].email, 'row@example.com');
+  assert.strictEqual(usageUpdates[0].used, expectedUsed);
+  assert.strictEqual(historyLoads, expectedHistoryLoads);
+};
+
+(async () => {
+  const helperContainer = makeElement('div');
+  context.__helperContainer = helperContainer;
+  context.__safeUrl = safeUrl;
+  const helperResult = vm.runInContext(
+    'appendVerificationLinkAction(__helperContainer, __safeUrl)',
+    context,
+  );
+  assert.strictEqual(helperResult, true);
+  assertAnchor(helperContainer, 'helper');
+
+  const unsafeContainer = makeElement('div');
+  context.__unsafeContainer = unsafeContainer;
+  const unsafeResult = vm.runInContext(
+    "appendVerificationLinkAction(__unsafeContainer, 'javascript:alert(1)')",
+    context,
+  );
+  assert.strictEqual(unsafeResult, false);
+  assert.strictEqual(unsafeContainer.children.length, 0);
+
+  const topLinkOnly = await runTopQuery({
+    ok: true,
+    code: '',
+    verification_url: safeUrl,
+    sender: 'sender@example.com',
+    subject: 'Verify account',
+    received_time: '2026-07-29 10:00:00',
+  }, 'top link-only');
+  assert.ok(topLinkOnly.surface.status.textContent.includes('已找到验证链接'));
+  assert.strictEqual(topLinkOnly.historyLoads, 0);
+
+  const topCodeAndLink = await runTopQuery({
+    ok: true,
+    code: '123456',
+    verification_url: safeUrl,
+    sender: 'sender@example.com',
+    subject: 'Verify account',
+    received_time: '2026-07-29 10:00:00',
+  }, 'top code+link');
+  assert.strictEqual(topCodeAndLink.historyLoads, 1);
+
+  await runQuickQuery({
+    ok: true,
+    code: '',
+    verification_url: safeUrl,
+  }, false, 0, 'quick link-only');
+
+  await runQuickQuery({
+    ok: true,
+    code: '654321',
+    verification_url: safeUrl,
+  }, true, 1, 'quick code+link');
+
+  for (const write of innerHTMLWrites) {
+    assert.ok(!write.value.includes(safeUrl), 'safe URL leaked into innerHTML');
+  }
+  for (const write of attributeWrites) {
+    assert.ok(!write.value.includes(safeUrl), 'safe URL leaked through setAttribute');
+  }
+  for (const write of handlerWrites) {
+    assert.ok(!write.value.includes(safeUrl), 'safe URL leaked into inline handler');
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+        result = subprocess.run(
+            ["node", "-e", harness],
+            input=main_script,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
         )
 
-        code_expression = (
-            re.escape(code_alias.group(1)) if code_alias else r"data\.code"
-        )
-        guard = re.search(
-            rf"\bif\s*\(\s*{code_expression}\s*\)", query_common
-        )
-        self.assertTrue(guard is not None, "top query needs a code-only history guard")
-        history_loads = list(re.finditer(r"loadQueryHistory\(1\)", query_common))
-        self.assertEqual(len(history_loads), 1, "top query must load history once")
-        self.assertLess(
-            result_guard.end(),
-            link_calls[0].start(),
-            "top query must append the link inside the shared result path",
-        )
-        self.assertLess(
-            link_calls[0].end(),
-            guard.start(),
-            "top query must append the link before its code-only history guard",
-        )
-        self.assertLess(
-            guard.end(),
-            history_loads[0].start(),
-            "top query history load must stay inside the code path",
-        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
     def test_mail_settings_exposes_verification_rule_editor(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
