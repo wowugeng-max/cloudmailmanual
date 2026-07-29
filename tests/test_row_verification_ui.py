@@ -65,6 +65,116 @@ class RowVerificationUiTest(unittest.TestCase):
 
         self.assertRegex(html, r"\.tab-pane\s*\{[^}]*min-width:\s*0")
 
+    def test_top_query_tables_have_verification_link_columns(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+
+        for table_id in ("queryResultTable", "queryOnlyResultTable"):
+            table_marker = f'<table id="{table_id}"'
+            self.assertIn(table_marker, html)
+            table = html.split(table_marker, 1)[1].split("</table>", 1)[0]
+            table_header = table.split("</thead>", 1)[0]
+            self.assertIn("验证链接", table_header)
+
+        query_renderer = html.split("async function queryCodeCommon", 1)[1].split(
+            "async function queryCode", 1
+        )[0]
+        self.assertIn('class="verification-link-cell"', query_renderer)
+
+    def test_verification_link_renderer_assigns_safe_dom_properties(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+        helper_marker = "function appendVerificationLinkAction"
+
+        self.assertIn(helper_marker, html)
+        helper = html.split(helper_marker, 1)[1].split(
+            "async function queryCodeCommon", 1
+        )[0]
+
+        for expected in (
+            "document.createElement('a')",
+            "link.href = verificationUrl",
+            "link.target = '_blank'",
+            "link.rel = 'noopener noreferrer'",
+            "link.textContent = '打开验证链接'",
+            "new URL(verificationUrl)",
+            "['http:', 'https:'].includes(parsed.protocol)",
+        ):
+            self.assertIn(expected, helper)
+
+        self.assertNotIn("innerHTML", helper)
+        self.assertNotIn("onclick", helper)
+        self.assertNotIn("${data.verification_url}", html)
+        self.assertNotIn("${verificationUrl}", html)
+        self.assertNotIn("verificationUrl}", html)
+        self.assertNotRegex(
+            html,
+            r"innerHTML\s*=[^;]*(?:data\.verification_url|verificationUrl)",
+        )
+        self.assertNotRegex(
+            html,
+            r'onclick\s*=\s*["\'][^"\']*(?:data\.verification_url|verificationUrl)',
+        )
+
+    def test_row_shortcut_has_separate_link_result_container(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+        history_renderer = html.split("async function loadHistory", 1)[1].split(
+            "async function setUsed", 1
+        )[0]
+        quick_query = html.split("async function quickQueryCode", 1)[1].split(
+            "async function loadHistory", 1
+        )[0]
+
+        self.assertIn('class="history-link-result"', history_renderer)
+        self.assertIn("data.verification_url", quick_query)
+        self.assertIn("appendVerificationLinkAction", quick_query)
+
+        if "const hasCode = !!data.code" in quick_query:
+            self.assertIn(
+                "const hasVerificationLink = !!data.verification_url", quick_query
+            )
+            code_condition = "if (hasCode)"
+            link_condition = "if (hasVerificationLink)"
+        else:
+            code_condition = "if (data.code)"
+            link_condition = "if (data.verification_url)"
+
+        self.assertIn(code_condition, quick_query)
+        after_code_condition = quick_query.split(code_condition, 1)[1]
+        self.assertIn("} else {", after_code_condition)
+        code_branch, no_code_branch = after_code_condition.split("} else {", 1)
+        self.assertIn(link_condition, no_code_branch)
+        link_only_branch = no_code_branch.split(link_condition, 1)[0]
+        self.assertIn("loadQueryHistory(1)", code_branch)
+        self.assertIn("updateHistoryRowUsage(row, email, false)", link_only_branch)
+        self.assertEqual(quick_query.count("loadQueryHistory(1)"), 1)
+
+    def test_top_query_handles_link_only_results(self):
+        html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+        query_common = html.split("async function queryCodeCommon", 1)[1].split(
+            "async function queryCode", 1
+        )[0]
+
+        checks_result_directly = "data.code || data.verification_url" in query_common
+        checks_result_via_flags = all(
+            expected in query_common
+            for expected in (
+                "const hasCode = !!data.code",
+                "const hasVerificationLink = !!data.verification_url",
+                "hasCode || hasVerificationLink",
+            )
+        )
+        self.assertTrue(
+            checks_result_directly or checks_result_via_flags,
+            "queryCodeCommon must treat code or verification_url as a result",
+        )
+        self.assertIn("已找到验证链接", query_common)
+        self.assertIn("appendVerificationLinkAction", query_common)
+        code_condition = "hasCode" if checks_result_via_flags else r"data\.code"
+        self.assertRegex(
+            query_common,
+            rf"if\s*\({code_condition}\)\s*(?:\{{\s*)?loadQueryHistory\(1\)",
+        )
+        self.assertEqual(query_common.count("loadQueryHistory(1)"), 1)
+
     def test_mail_settings_exposes_verification_rule_editor(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
 
