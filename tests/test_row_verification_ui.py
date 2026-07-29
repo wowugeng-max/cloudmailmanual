@@ -1,3 +1,4 @@
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -70,48 +71,109 @@ class RowVerificationUiTest(unittest.TestCase):
 
         for table_id in ("queryResultTable", "queryOnlyResultTable"):
             table_marker = f'<table id="{table_id}"'
-            self.assertIn(table_marker, html)
+            self.assertTrue(table_marker in html, f"missing {table_id}")
             table = html.split(table_marker, 1)[1].split("</table>", 1)[0]
             table_header = table.split("</thead>", 1)[0]
             self.assertIn("验证链接", table_header)
 
-        query_renderer = html.split("async function queryCodeCommon", 1)[1].split(
+        query_marker = "async function queryCodeCommon"
+        self.assertTrue(query_marker in html, "missing queryCodeCommon")
+        query_renderer = html.split(query_marker, 1)[1].split(
             "async function queryCode", 1
         )[0]
-        self.assertIn('class="verification-link-cell"', query_renderer)
+        self.assertTrue(
+            'class="verification-link-cell"' in query_renderer,
+            "top query row must include verification-link-cell",
+        )
 
     def test_verification_link_renderer_assigns_safe_dom_properties(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
         helper_marker = "function appendVerificationLinkAction"
-
-        self.assertIn(helper_marker, html)
-        helper = html.split(helper_marker, 1)[1].split(
+        self.assertTrue(helper_marker in html, "missing verification link helper")
+        helper_tail = html.split(helper_marker, 1)[1]
+        self.assertTrue(
+            "async function queryCodeCommon" in helper_tail,
+            "missing queryCodeCommon after verification link helper",
+        )
+        helper = helper_marker + helper_tail.split(
             "async function queryCodeCommon", 1
         )[0]
+        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
 
-        for expected in (
-            "document.createElement('a')",
-            "link.href = verificationUrl",
-            "link.target = '_blank'",
-            "link.rel = 'noopener noreferrer'",
-            "link.textContent = '打开验证链接'",
-            "new URL(verificationUrl)",
-            "['http:', 'https:'].includes(parsed.protocol)",
-        ):
-            self.assertIn(expected, helper)
-
-        self.assertNotIn("innerHTML", helper)
-        self.assertNotIn("onclick", helper)
-        self.assertNotIn("${data.verification_url}", html)
-        self.assertNotIn("${verificationUrl}", html)
-        self.assertNotIn("verificationUrl}", html)
-        self.assertNotRegex(
-            html,
-            r"innerHTML\s*=[^;]*(?:data\.verification_url|verificationUrl)",
+        signature = re.search(
+            rf"function\s+appendVerificationLinkAction\s*\(\s*"
+            rf"({identifier})\s*,\s*({identifier})",
+            helper,
         )
-        self.assertNotRegex(
+        self.assertTrue(signature is not None, "missing helper container parameter")
+        container_name = signature.group(1)
+
+        anchor_match = re.search(
+            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
+            r"document\.createElement\(\s*['\"]a['\"]\s*\)",
+            helper,
+        )
+        self.assertTrue(anchor_match is not None, "helper must create an anchor")
+        anchor_name = anchor_match.group(1)
+
+        href_match = re.search(
+            rf"\b{re.escape(anchor_name)}\.href\s*=\s*"
+            rf"({identifier})\s*;?",
+            helper,
+        )
+        self.assertTrue(href_match is not None, "helper must assign anchor href")
+        href_value = href_match.group(1)
+
+        for property_name, value in (
+            ("target", "_blank"),
+            ("rel", "noopener noreferrer"),
+            ("textContent", "打开验证链接"),
+        ):
+            self.assertRegex(
+                helper,
+                rf"\b{re.escape(anchor_name)}\.{property_name}\s*=\s*"
+                rf"['\"]{re.escape(value)}['\"]\s*;?",
+            )
+
+        self.assertRegex(
+            helper,
+            rf"new\s+URL\(\s*{re.escape(href_value)}\s*\)",
+        )
+        self.assertRegex(
+            helper,
+            rf"\[\s*['\"]http:['\"]\s*,\s*['\"]https:['\"]\s*\]"
+            rf"\s*\.includes\(\s*{identifier}\.protocol\s*\)",
+        )
+        append_match = re.search(
+            rf"\b{re.escape(container_name)}\.(?:appendChild|append)\(\s*"
+            rf"{re.escape(anchor_name)}\s*\)\s*;?",
+            helper,
+        )
+        self.assertTrue(
+            append_match is not None,
+            "helper must append the anchor to its container",
+        )
+
+        self.assertTrue("innerHTML" not in helper, "helper must not use innerHTML")
+        self.assertTrue("onclick" not in helper, "helper must not use onclick")
+        dangerous_inner_html = re.search(
+            r"\.innerHTML\s*=\s*`[^`]*(?:verification_url|verificationUrl)[^`]*`",
             html,
-            r'onclick\s*=\s*["\'][^"\']*(?:data\.verification_url|verificationUrl)',
+            re.DOTALL,
+        )
+        self.assertTrue(
+            dangerous_inner_html is None,
+            "verification URL must not enter an innerHTML template",
+        )
+        dangerous_inline_onclick = re.search(
+            r'onclick\s*=\s*["\'][^"\']*(?:verification_url|verificationUrl)'
+            r'[^"\']*["\']',
+            html,
+            re.DOTALL,
+        )
+        self.assertTrue(
+            dangerous_inline_onclick is None,
+            "verification URL must not enter inline onclick",
         )
 
     def test_row_shortcut_has_separate_link_result_container(self):
@@ -123,57 +185,136 @@ class RowVerificationUiTest(unittest.TestCase):
             "async function loadHistory", 1
         )[0]
 
-        self.assertIn('class="history-link-result"', history_renderer)
-        self.assertIn("data.verification_url", quick_query)
-        self.assertIn("appendVerificationLinkAction", quick_query)
+        self.assertTrue(
+            'class="history-link-result"' in history_renderer,
+            "history row must include a separate link result container",
+        )
+        link_call_pattern = (
+            r"appendVerificationLinkAction\s*\([^;]*?,\s*"
+            r"data\.verification_url\s*,?\s*\)"
+        )
+        link_calls = list(re.finditer(link_call_pattern, quick_query, re.DOTALL))
+        self.assertEqual(len(link_calls), 1, "quick query must append one link action")
+        remaining = quick_query
+        for allowed_pattern in (
+            link_call_pattern,
+            r"!!\s*data\.verification_url",
+            r"Boolean\(\s*data\.verification_url\s*\)",
+            r"if\s*\(\s*data\.verification_url\s*\)",
+        ):
+            remaining = re.sub(allowed_pattern, "", remaining, flags=re.DOTALL)
+        self.assertTrue(
+            "data.verification_url" not in remaining,
+            "quick query must only check or append data.verification_url",
+        )
 
-        if "const hasCode = !!data.code" in quick_query:
-            self.assertIn(
-                "const hasVerificationLink = !!data.verification_url", quick_query
-            )
-            code_condition = "if (hasCode)"
-            link_condition = "if (hasVerificationLink)"
-        else:
-            code_condition = "if (data.code)"
-            link_condition = "if (data.verification_url)"
-
-        self.assertIn(code_condition, quick_query)
-        after_code_condition = quick_query.split(code_condition, 1)[1]
-        self.assertIn("} else {", after_code_condition)
-        code_branch, no_code_branch = after_code_condition.split("} else {", 1)
-        self.assertIn(link_condition, no_code_branch)
-        link_only_branch = no_code_branch.split(link_condition, 1)[0]
-        self.assertIn("loadQueryHistory(1)", code_branch)
-        self.assertIn("updateHistoryRowUsage(row, email, false)", link_only_branch)
-        self.assertEqual(quick_query.count("loadQueryHistory(1)"), 1)
+        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+        code_alias = re.search(
+            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
+            r"(?:!!\s*data\.code|Boolean\(\s*data\.code\s*\))",
+            quick_query,
+        )
+        code_expression = re.escape(code_alias.group(1)) if code_alias else r"data\.code"
+        guard = re.search(
+            rf"\bif\s*\(\s*{code_expression}\s*\)", quick_query
+        )
+        self.assertTrue(guard is not None, "quick query needs a code-only branch")
+        history_loads = list(re.finditer(r"loadQueryHistory\(1\)", quick_query))
+        self.assertEqual(len(history_loads), 1, "quick query must load history once")
+        self.assertLess(
+            link_calls[0].end(),
+            guard.start(),
+            "quick query must append the link before checking for code",
+        )
+        self.assertLess(
+            guard.end(),
+            history_loads[0].start(),
+            "quick query history load must stay inside the code path",
+        )
+        self.assertEqual(
+            len(
+                re.findall(
+                    r"updateHistoryRowUsage\(\s*row\s*,\s*email\s*,\s*false\s*\)",
+                    quick_query,
+                )
+            ),
+            1,
+            "link-only quick query must keep account usage false",
+        )
 
     def test_top_query_handles_link_only_results(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
         query_common = html.split("async function queryCodeCommon", 1)[1].split(
             "async function queryCode", 1
         )[0]
-
-        checks_result_directly = "data.code || data.verification_url" in query_common
-        checks_result_via_flags = all(
-            expected in query_common
-            for expected in (
-                "const hasCode = !!data.code",
-                "const hasVerificationLink = !!data.verification_url",
-                "hasCode || hasVerificationLink",
-            )
-        )
-        self.assertTrue(
-            checks_result_directly or checks_result_via_flags,
-            "queryCodeCommon must treat code or verification_url as a result",
-        )
-        self.assertIn("已找到验证链接", query_common)
-        self.assertIn("appendVerificationLinkAction", query_common)
-        code_condition = "hasCode" if checks_result_via_flags else r"data\.code"
-        self.assertRegex(
+        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+        code_alias = re.search(
+            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
+            r"(?:!!\s*data\.code|Boolean\(\s*data\.code\s*\))",
             query_common,
-            rf"if\s*\({code_condition}\)\s*(?:\{{\s*)?loadQueryHistory\(1\)",
         )
-        self.assertEqual(query_common.count("loadQueryHistory(1)"), 1)
+        link_alias = re.search(
+            rf"\b(?:const|let)\s+({identifier})\s*=\s*"
+            r"(?:!!\s*data\.verification_url|"
+            r"Boolean\(\s*data\.verification_url\s*\))",
+            query_common,
+        )
+        result_guard = re.search(
+            r"\bif\s*\(\s*data\.code\s*\|\|\s*"
+            r"data\.verification_url\s*\)",
+            query_common,
+        )
+        if result_guard is None and code_alias and link_alias:
+            result_guard = re.search(
+                rf"\bif\s*\(\s*{re.escape(code_alias.group(1))}\s*\|\|\s*"
+                rf"{re.escape(link_alias.group(1))}\s*\)",
+                query_common,
+            )
+        self.assertTrue(result_guard is not None, "top query must accept code or link")
+        self.assertIn("已找到验证链接", query_common)
+        link_call_pattern = (
+            r"appendVerificationLinkAction\s*\([^;]*?,\s*"
+            r"data\.verification_url\s*,?\s*\)"
+        )
+        link_calls = list(re.finditer(link_call_pattern, query_common, re.DOTALL))
+        self.assertEqual(len(link_calls), 1, "top query must append one link action")
+        remaining = query_common
+        for allowed_pattern in (
+            link_call_pattern,
+            r"!!\s*data\.verification_url",
+            r"Boolean\(\s*data\.verification_url\s*\)",
+            r"data\.code\s*\|\|\s*data\.verification_url",
+        ):
+            remaining = re.sub(allowed_pattern, "", remaining, flags=re.DOTALL)
+        self.assertTrue(
+            "data.verification_url" not in remaining,
+            "top query must only check or append data.verification_url",
+        )
+
+        code_expression = (
+            re.escape(code_alias.group(1)) if code_alias else r"data\.code"
+        )
+        guard = re.search(
+            rf"\bif\s*\(\s*{code_expression}\s*\)", query_common
+        )
+        self.assertTrue(guard is not None, "top query needs a code-only history guard")
+        history_loads = list(re.finditer(r"loadQueryHistory\(1\)", query_common))
+        self.assertEqual(len(history_loads), 1, "top query must load history once")
+        self.assertLess(
+            result_guard.end(),
+            link_calls[0].start(),
+            "top query must append the link inside the shared result path",
+        )
+        self.assertLess(
+            link_calls[0].end(),
+            guard.start(),
+            "top query must append the link before its code-only history guard",
+        )
+        self.assertLess(
+            guard.end(),
+            history_loads[0].start(),
+            "top query history load must stay inside the code path",
+        )
 
     def test_mail_settings_exposes_verification_rule_editor(self):
         html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
