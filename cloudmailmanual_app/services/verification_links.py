@@ -275,14 +275,12 @@ def extract_verification_link(
         *_bare_url_candidates(raw_text),
     ]
 
-    seen_hrefs = set()
     best_href: Optional[str] = None
     best_score: Optional[int] = None
     for candidate in candidates:
         href = candidate.href.strip()
-        if not href or href in seen_hrefs:
+        if not href:
             continue
-        seen_hrefs.add(href)
         if not _is_absolute_http_url(href):
             continue
 

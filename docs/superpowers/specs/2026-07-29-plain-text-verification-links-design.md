@@ -60,8 +60,9 @@ The parser produces candidates from three sources in deterministic order:
 
 The HTML parser continues to ignore `script`, `style`, and `template` content.
 It also collects visible text segments for bare-URL scanning. Anchor candidates
-and bare-text candidates are deduplicated by their exact URL value while
-retaining the first occurrence.
+and bare-text candidates remain separate occurrences even when they have the
+same exact URL, because each occurrence may have different visible text or
+nearby context.
 
 Bare URLs are recognized with a bounded, linear regular expression beginning
 with `http://` or `https://` and ending at whitespace, quotes, or markup
@@ -98,9 +99,11 @@ characters before and after the URL in the same HTML or plain-text body. This
 allows copy such as "Activate your account" to qualify a generic token URL
 without treating every token-bearing URL as a verification action.
 
-The highest-scoring candidate wins. Ties retain the first candidate in the
-collection order defined above. A URL containing `verify-email` in its path
-qualifies even when its visible label is the URL itself.
+Every occurrence is validated and scored independently. The highest-scoring
+candidate wins, including when multiple occurrences have the same `href`.
+Ties retain the first candidate in the collection order defined above. A URL
+containing `verify-email` in its path qualifies even when its visible label is
+the URL itself.
 
 ## Client Integration
 
@@ -142,6 +145,8 @@ Add focused service and client tests for:
 - A plain-text-only verification URL.
 - An anchor whose visible label is the full URL.
 - A generic token URL qualified by nearby "activate" or "confirm" copy.
+- The same `href` in multiple occurrences, with the strongest occurrence
+  context determining whether it qualifies.
 - Multiple candidates where the strongest action link wins.
 - URLs in `script`, `style`, and `template` content being ignored.
 - Ordinary, footer, token-only, relative, credential-bearing, malformed, and

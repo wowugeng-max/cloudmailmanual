@@ -32,6 +32,15 @@ class VerificationLinkExtractionTest(unittest.TestCase):
 
         self.assertEqual(extract_verification_link(html), href)
 
+    def test_repeated_href_uses_strongest_occurrence_context(self):
+        href = "https://example.test/account?token=synthetic-value"
+        html = (
+            "<p>Activate your account:</p>"
+            f'<a href="{href}">{href}</a>'
+        )
+
+        self.assertEqual(extract_verification_link(html), href)
+
     def test_nearby_action_copy_qualifies_generic_bare_token_url(self):
         href = "https://example.test/account?token=synthetic-value"
         text = f"Complete your account setup using this link: {href}"

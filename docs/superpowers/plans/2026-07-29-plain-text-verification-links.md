@@ -146,7 +146,26 @@ git commit -m "test: define plain-text verification link contract"
 - Modify: `cloudmailmanual_app/services/verification_links.py:1-245`
 - Test: `tests/test_verification_links.py`
 
-- [ ] **Step 1: Add bounded URL-matching constants**
+- [ ] **Step 1: Add repeated-href context regression coverage**
+
+Add this test to `VerificationLinkExtractionTest`:
+
+```python
+def test_repeated_href_uses_strongest_occurrence_context(self):
+    href = "https://example.test/account?token=synthetic-value"
+    html = (
+        "<p>Activate your account:</p>"
+        f'<a href="{href}">{href}</a>'
+    )
+
+    self.assertEqual(extract_verification_link(html), href)
+```
+
+Run the test before changing production code. Expected: it fails because the
+anchor occurrence has no action evidence and must not suppress the visible-text
+occurrence with stronger nearby context.
+
+- [ ] **Step 2: Add bounded URL-matching constants**
 
 After the existing encoded-query patterns, add:
 
@@ -159,7 +178,7 @@ _CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
 
 This matcher has no nested quantifiers and stops at whitespace, quotes, or markup delimiters.
 
-- [ ] **Step 2: Extend the HTML parser with visible text collection**
+- [ ] **Step 3: Extend the HTML parser with visible text collection**
 
 Add `visible_text_parts` in `_AnchorParser.__init__()`:
 
@@ -180,7 +199,7 @@ def handle_data(self, data: str) -> None:
 
 This preserves nested visible anchor labels while excluding `script`, `style`, and `template` text from both anchor and bare-link evidence.
 
-- [ ] **Step 3: Add conservative bare-URL cleanup and context helpers**
+- [ ] **Step 4: Add conservative bare-URL cleanup and context helpers**
 
 Place these helpers before `_score()`:
 
@@ -211,7 +230,7 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
 
 Do not include `match.group(0)` in `text`; action terms inside `token`, `signature`, and other opaque URL values must remain URL evidence only.
 
-- [ ] **Step 4: Update the public extractor while preserving compatibility**
+- [ ] **Step 5: Update the public extractor while preserving compatibility**
 
 Replace `extract_verification_link()` with:
 
@@ -240,14 +259,12 @@ def extract_verification_link(
         *_bare_url_candidates(raw_text),
     ]
 
-    seen_hrefs = set()
     best_href: Optional[str] = None
     best_score: Optional[int] = None
     for candidate in candidates:
         href = candidate.href.strip()
-        if not href or href in seen_hrefs:
+        if not href:
             continue
-        seen_hrefs.add(href)
         if not _is_absolute_http_url(href):
             continue
 
@@ -259,9 +276,14 @@ def extract_verification_link(
     return best_href
 ```
 
+Validate and score every candidate occurrence, even when its `href` appeared
+earlier. Different occurrences may have different labels or nearby context;
+the strict `score > best_score` comparison keeps the earliest occurrence when
+their scores tie.
+
 Keep the existing `RuntimeError` propagation test green: unexpected parser failures must not be converted into a false successful result.
 
-- [ ] **Step 5: Run the full parser suite**
+- [ ] **Step 6: Run the full parser suite**
 
 Run:
 
@@ -269,9 +291,11 @@ Run:
 /Users/ruiyaosong/cloudmailmanual/.venv-mac/bin/python -m pytest tests/test_verification_links.py -q
 ```
 
-Expected: every anchor and bare-link parser test passes, including opaque-token, malformed URL, invisible-content, and exact-href preservation cases.
+Expected: every anchor and bare-link parser test passes, including opaque-token,
+malformed URL, invisible-content, repeated-href context, and exact-href
+preservation cases.
 
-- [ ] **Step 6: Check formatting and commit the parser implementation**
+- [ ] **Step 7: Check formatting and commit the parser implementation**
 
 Run:
 
@@ -284,7 +308,8 @@ Expected: no output and exit code `0`.
 Commit:
 
 ```bash
-git add cloudmailmanual_app/services/verification_links.py
+git add cloudmailmanual_app/services/verification_links.py \
+  tests/test_verification_links.py
 git commit -m "feat: extract verification links from visible message text"
 ```
 
@@ -469,6 +494,7 @@ The reviewer must inspect the complete `origin/main...HEAD` range for parser fal
 - [x] Every design goal maps to a parser or client task.
 - [x] Visible HTML, plain text, full-URL anchor labels, long queries, nearby context, invisible content, sentence punctuation, and whitespace boundaries have explicit tests.
 - [x] The plan explicitly excludes the URL itself from nearby text evidence, preserving opaque-token false-positive protection.
+- [x] Repeated identical `href` occurrences retain their separate contexts and are all scored, with collection order breaking ties.
 - [x] Existing callers remain compatible through the optional `raw_text` argument.
 - [x] No route, database, UI, Webmail, network, decoding, or persistence changes are introduced.
 - [x] The final task verifies the entire pre-existing verification-link feature before merging to `main`.
