@@ -319,21 +319,24 @@ def register_routes(app):
                 "subject": str(detail.get("subject") or ""),
                 "received_time": str(detail.get("received_time") or ""),
             }
+            history_sender = _sanitize_verification_metadata(
+                normalized_detail["sender"]
+            )
             if not normalized_detail["code"]:
-                mark_account_used(email, used=False, platform="")
+                link_platform = ""
+                if normalized_detail["verification_url"]:
+                    link_platform = platform or history_sender or "验证码查询"
+                mark_account_used(email, used=False, platform=link_platform)
 
                 return jsonify({
                     "ok": True,
                     "email": email,
                     "saved": False,
                     "auto_marked_used": False,
-                    "mark_platform": "",
+                    "mark_platform": link_platform,
                     **normalized_detail,
                 })
 
-            history_sender = _sanitize_verification_metadata(
-                normalized_detail["sender"]
-            )
             save_verification_query(email, {
                 "code": normalized_detail["code"],
                 "sender": history_sender,
