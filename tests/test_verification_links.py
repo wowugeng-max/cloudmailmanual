@@ -5,6 +5,71 @@ from cloudmailmanual_app.services.verification_links import extract_verification
 
 
 class VerificationLinkExtractionTest(unittest.TestCase):
+    def test_extracts_visible_html_bare_activation_url_with_long_query(self):
+        href = (
+            "https://app.example.test/api/auth/verify-email?"
+            "token=eyJhbGciOiJIUzI1NiJ9.synthetic.signature"
+            "&callbackURL=%2Fmanage%2Freferral"
+        )
+        html = (
+            "<h1>Activate your account</h1>"
+            "<p>Please click the link below to activate your account.</p>"
+            f"<p>{href.replace('&', '&amp;')}</p>"
+            "<p>If you did not create an account, ignore this email.</p>"
+        )
+
+        self.assertEqual(extract_verification_link(html), href)
+
+    def test_extracts_plain_text_bare_verification_url(self):
+        href = "https://example.test/verify-email?token=synthetic-value"
+        text = f"Activate your account\n\n{href}\n\nIgnore this email if unexpected."
+
+        self.assertEqual(extract_verification_link("", text), href)
+
+    def test_extracts_anchor_whose_visible_label_is_the_full_url(self):
+        href = "https://example.test/activate?token=synthetic-value"
+        html = f'<a href="{href}">{href}</a>'
+
+        self.assertEqual(extract_verification_link(html), href)
+
+    def test_nearby_action_copy_qualifies_generic_bare_token_url(self):
+        href = "https://example.test/account?token=synthetic-value"
+        text = f"Complete your account setup using this link: {href}"
+
+        self.assertEqual(extract_verification_link("", text), href)
+
+    def test_action_word_inside_opaque_bare_token_is_not_text_evidence(self):
+        text = (
+            "Account details: "
+            "https://example.test/account?token=prefix-confirm-suffix"
+        )
+
+        self.assertIsNone(extract_verification_link("", text))
+
+    def test_ignores_bare_links_inside_invisible_html_content(self):
+        html = (
+            "<script>https://example.test/verify?token=script</script>"
+            "<style>https://example.test/confirm?token=style</style>"
+            "<template>https://example.test/activate?token=template</template>"
+            "<p>Read the account update.</p>"
+        )
+
+        self.assertIsNone(extract_verification_link(html))
+
+    def test_trims_sentence_punctuation_without_truncating_query(self):
+        href = (
+            "https://example.test/verify-email?token=synthetic-value"
+            "&callbackURL=%2Fmanage%2Freferral"
+        )
+        text = f"Activate your account here ({href})."
+
+        self.assertEqual(extract_verification_link("", text), href)
+
+    def test_does_not_reconstruct_bare_url_across_whitespace(self):
+        text = "Activate using https://\nexample.test/verify?token=synthetic-value"
+
+        self.assertIsNone(extract_verification_link("", text))
+
     def test_extracts_action_link_and_preserves_original_tracking_href(self):
         href = (
             "https://awstrack.me/L0/https:%2F%2Fservice.example%2Fverify-email"
