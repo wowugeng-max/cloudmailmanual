@@ -23,6 +23,8 @@ finding that URL reliably.
   `complete`.
 - Allow nearby visible copy to provide action evidence for a generic URL.
 - Preserve the existing link-only and code-plus-link API behavior.
+- Prevent opaque HTTP(S) URL tokens from becoming verification-code matches
+  while preserving real codes elsewhere in the message body.
 - Avoid false positives from ordinary navigation, privacy, preference, and
   unsubscribe links.
 
@@ -49,6 +51,17 @@ def extract_verification_link(
 
 Existing callers that pass only HTML remain compatible. `CloudMailClient`
 passes both the HTML and plain-text message bodies.
+
+The service also exports a shared body-masking helper:
+
+```python
+def mask_http_urls(value: str) -> str:
+    ...
+```
+
+It replaces every matched HTTP(S) URL span with equal-length spaces so offsets
+and surrounding text remain stable. Empty strings are returned unchanged;
+non-string inputs return an empty string.
 
 ## Candidate Collection
 
@@ -117,7 +130,20 @@ its visible label is the URL itself.
 
 ## Client Integration
 
-`CloudMailClient.query_verification_detail()` calls:
+For each message, `CloudMailClient.query_verification_detail()` creates masked
+copies for verification-code extraction:
+
+```python
+code_text = mask_http_urls(text)
+code_html = mask_http_urls(html)
+```
+
+Subject extraction remains completely unchanged. The four existing body code
+extraction calls keep their current order but use `code_text` and `code_html`.
+This prevents values such as `token=ABC123` inside an HTTP(S) URL from winning
+as an OTP while preserving a real code such as `654321` outside the URL.
+
+Link extraction continues to receive the original, untouched bodies:
 
 ```python
 verification_url = extract_verification_link(html, text) or ""
@@ -167,6 +193,10 @@ Add focused service and client tests for:
 - Exact preservation of the selected URL and absence of network calls.
 - `CloudMailClient` passing both body representations while preserving
   link-only and code-plus-link behavior.
+- Plain-text and visible-HTML URL tokens not being returned as verification
+  codes.
+- A real verification code outside a URL remaining extractable when the same
+  body also contains an opaque alphanumeric URL token.
 
 Run the focused parser/client suites, the complete Python suite, JavaScript UI
 checks, and the existing token-persistence scan before merging to `main`.

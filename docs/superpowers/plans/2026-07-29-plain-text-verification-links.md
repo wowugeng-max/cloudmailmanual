@@ -4,7 +4,7 @@
 
 **Goal:** Recognize verification links that appear as complete URLs in visible HTML or plain-text email bodies while preserving the existing safe link, history, and account-state behavior.
 
-**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus visible-text content, then scan visible HTML and plain text with a bounded HTTP(S) URL matcher. Mask every matched URL span before collecting nearby text, feed distinct candidate evidence through the existing URL validator and action-term scorer, and cache URL work by `href` within one extraction call. Pass both message body representations from `CloudMailClient` without changing routes, persistence, or UI contracts.
+**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus visible-text content, then scan visible HTML and plain text with a bounded HTTP(S) URL matcher. Mask every matched URL span before collecting nearby text, feed distinct candidate evidence through the existing URL validator and action-term scorer, and cache URL work by `href` within one extraction call. Export the same equal-length URL masker for `CloudMailClient`, which scans masked body copies for verification codes while passing the original HTML and plain text to link extraction. Routes, persistence, and UI contracts remain unchanged.
 
 **Tech Stack:** Python 3.9, stdlib `html.parser`, `re`, `urllib.parse`, `unittest`, `pytest`, existing Flask application and Node VM UI tests.
 
@@ -12,8 +12,8 @@
 
 ## File Responsibilities
 
-- `cloudmailmanual_app/services/verification_links.py`: Parse anchor and bare-text URL candidates, validate them, score action evidence, and return one untouched URL.
-- `cloud_mail_client.py`: Supply both HTML and plain-text message bodies to the parser while preserving code extraction precedence.
+- `cloudmailmanual_app/services/verification_links.py`: Parse anchor and bare-text URL candidates, validate them, score action evidence, return one untouched URL, and export equal-length HTTP(S) URL masking.
+- `cloud_mail_client.py`: Supply both original body representations to the link parser while using URL-masked body copies for code extraction without changing precedence.
 - `tests/test_verification_links.py`: Define the parser's positive, negative, boundary, preservation, and security contracts.
 - `tests/test_verification_rules.py`: Verify `CloudMailClient` integration and unchanged link-only/code-plus-link semantics.
 
@@ -509,6 +509,52 @@ Expected: all tests pass. Link-only messages still return `code=""`; code-plus-l
 ```bash
 git add cloud_mail_client.py tests/test_verification_rules.py
 git commit -m "feat: scan plain-text email bodies for verification links"
+```
+
+### Task 3 Follow-up: Exclude link tokens from code extraction
+
+**Files:**
+- Modify: `tests/test_verification_rules.py`
+- Modify: `tests/test_verification_links.py`
+- Modify: `cloudmailmanual_app/services/verification_links.py`
+- Modify: `cloud_mail_client.py`
+- Modify: `docs/superpowers/specs/2026-07-29-plain-text-verification-links-design.md`
+- Modify: `docs/superpowers/plans/2026-07-29-plain-text-verification-links.md`
+
+- [ ] **Step 1: Add failing client regressions**
+
+Cover a plain-text-only URL with `token=ABC123` and require `code=""`. Add a
+second message containing both a real `654321` code and the same synthetic URL
+token, requiring the real code and untouched link. Use a visible HTML URL token
+to preserve the same link-only contract for HTML bodies.
+
+- [ ] **Step 2: Add the shared masking contract**
+
+Export `mask_http_urls(value: str) -> str` from the verification-link service.
+Reuse `_BARE_HTTP_URL_PATTERN`, replace each matched span with equal-length
+spaces, return empty strings unchanged, and return `""` for non-string inputs.
+
+- [ ] **Step 3: Isolate body code extraction from URL tokens**
+
+Within each message loop iteration, create:
+
+```python
+code_text = mask_http_urls(text)
+code_html = mask_http_urls(html)
+```
+
+Keep subject extraction unchanged. Preserve the four body extraction calls and
+their order, substituting only `code_text` and `code_html`. Continue calling
+`extract_verification_link(html, text)` with the original bodies.
+
+- [ ] **Step 4: Verify and commit**
+
+Run the focused client tests, `tests/test_verification_rules.py`, and the
+combined `tests/test_verification_links.py tests/test_verification_rules.py`
+suites. Run `git diff --check`, then commit:
+
+```bash
+git commit -m "fix: exclude link tokens from code extraction"
 ```
 
 ### Task 4: Complete regression and security verification

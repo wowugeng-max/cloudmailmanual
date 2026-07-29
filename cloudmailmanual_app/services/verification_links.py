@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import SplitResult, urlsplit
 
 
-__all__ = ["extract_verification_link"]
+__all__ = ["extract_verification_link", "mask_http_urls"]
 
 
 _ACTION_TERMS = ("verify", "confirm", "activate", "complete")
@@ -219,19 +219,23 @@ def _trim_bare_url_candidate(value: str) -> str:
     return trimmed
 
 
+def mask_http_urls(value: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    if not value:
+        return value
+    return _BARE_HTTP_URL_PATTERN.sub(
+        lambda match: " " * (match.end() - match.start()),
+        value,
+    )
+
+
 def _bare_url_candidates(value: str) -> List[_Anchor]:
     matches = list(_BARE_HTTP_URL_PATTERN.finditer(value))
     if not matches:
         return []
 
-    masked_parts: List[str] = []
-    previous_end = 0
-    for match in matches:
-        masked_parts.append(value[previous_end:match.start()])
-        masked_parts.append(" " * (match.end() - match.start()))
-        previous_end = match.end()
-    masked_parts.append(value[previous_end:])
-    masked_value = "".join(masked_parts)
+    masked_value = mask_http_urls(value)
 
     candidates: List[_Anchor] = []
     for match in matches:

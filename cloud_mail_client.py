@@ -18,7 +18,10 @@ from cloudmailmanual_app.repositories.verification_rules import (
     get_default_verification_code_rules,
     get_verification_code_rules,
 )
-from cloudmailmanual_app.services.verification_links import extract_verification_link
+from cloudmailmanual_app.services.verification_links import (
+    extract_verification_link,
+    mask_http_urls,
+)
 
 
 PRESET_PATTERNS = {
@@ -262,6 +265,8 @@ class CloudMailClient:
             subject = str(row.get("subject") or "")
             text = str(row.get("text") or "")
             html = str(row.get("content") or "")
+            code_text = mask_http_urls(text)
+            code_html = mask_http_urls(html)
 
             # 先查主题：先不允许纯数字，再允许纯数字
             code = self.extract_verification_code(
@@ -281,28 +286,28 @@ class CloudMailClient:
             # 主题没有再查正文（同样先偏好非纯数字）
             if not code:
                 code = self.extract_verification_code(
-                    text,
+                    code_text,
                     allow_digits=False,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,
                 )
             if not code:
                 code = self.extract_verification_code(
-                    html,
+                    code_html,
                     allow_digits=False,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,
                 )
             if not code:
                 code = self.extract_verification_code(
-                    text,
+                    code_text,
                     allow_digits=True,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,
                 )
             if not code:
                 code = self.extract_verification_code(
-                    html,
+                    code_html,
                     allow_digits=True,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,

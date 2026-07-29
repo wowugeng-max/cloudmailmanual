@@ -6,6 +6,24 @@ from cloudmailmanual_app.services.verification_links import extract_verification
 
 
 class VerificationLinkExtractionTest(unittest.TestCase):
+    def test_mask_http_urls_replaces_matches_with_equal_length_spaces(self):
+        href = "https://example.test/verify-email?token=ABC123"
+        value = f'<a href="{href}">{href}</a>'
+        expected = f'<a href="{" " * len(href)}">{" " * len(href)}</a>'
+        mask_http_urls = getattr(verification_links, "mask_http_urls", None)
+
+        self.assertIn("mask_http_urls", verification_links.__all__)
+        self.assertIsNotNone(mask_http_urls)
+        self.assertEqual(mask_http_urls(value), expected)
+        self.assertEqual(len(mask_http_urls(value)), len(value))
+
+    def test_mask_http_urls_handles_empty_and_non_string_values(self):
+        mask_http_urls = getattr(verification_links, "mask_http_urls", None)
+
+        self.assertIsNotNone(mask_http_urls)
+        self.assertEqual(mask_http_urls(""), "")
+        self.assertEqual(mask_http_urls(None), "")
+
     def test_extracts_visible_html_bare_activation_url_with_long_query(self):
         href = (
             "https://app.example.test/api/auth/verify-email?"
