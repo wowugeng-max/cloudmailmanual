@@ -236,27 +236,31 @@ class VerificationLinkExtractionTest(unittest.TestCase):
 
         self.assertEqual(extract_verification_link("", text), href)
 
-    def test_context_radius_does_not_create_action_word_boundaries(self):
+    def test_context_radius_uses_sentinels_without_including_real_char_161(self):
         href = "https://example.test/account?token=synthetic-value"
         radius = verification_links._TEXT_CONTEXT_RADIUS
         boundary_padding = " " * (radius - len("verify"))
         false_positive_texts = (
             f"unverify{boundary_padding}{href}",
             f"{href}{boundary_padding}verifyx",
+            f"verify{' ' * (radius - len('verify') + 1)}{href}",
+            f"{href}{' ' * (radius - len('verify') + 1)}verify",
+            f"activate{' ' * (radius - len('activate') + 1)}{href}",
         )
 
         for text in false_positive_texts:
             with self.subTest(text=text):
                 self.assertIsNone(extract_verification_link("", text))
 
-        real_action_padding = " " * (radius - len(" verify"))
-        self.assertEqual(
-            extract_verification_link(
-                "",
-                f"{href}{real_action_padding} verify",
-            ),
-            href,
+        real_action_padding = " " * (radius - len("verify"))
+        valid_context_texts = (
+            f"verify{real_action_padding}{href}",
+            f"{href}{real_action_padding}verify",
         )
+
+        for text in valid_context_texts:
+            with self.subTest(text=text):
+                self.assertEqual(extract_verification_link("", text), href)
 
     def test_action_word_inside_opaque_bare_token_is_not_text_evidence(self):
         text = (
@@ -616,6 +620,26 @@ class VerificationLinkExtractionTest(unittest.TestCase):
                 html = f'<a href="{href}">Verify account</a>'
                 self.assertEqual(extract_verification_link(html), href)
 
+    def test_rejects_signed_or_non_ascii_raw_ports(self):
+        raw_ports = ("+80", "１２３", "١٢٣")
+
+        for raw_port in raw_ports:
+            for authority in ("example.test", "[2001:db8::1]"):
+                href = f"https://{authority}:{raw_port}/verify"
+                with self.subTest(href=href):
+                    html = f'<a href="{href}">Verify account</a>'
+                    self.assertIsNone(extract_verification_link(html))
+
+    def test_accepts_ascii_decimal_raw_port_boundaries(self):
+        raw_ports = ("0", "00080", "65535")
+
+        for raw_port in raw_ports:
+            for authority in ("example.test", "[2001:db8::1]"):
+                href = f"https://{authority}:{raw_port}/verify"
+                with self.subTest(href=href):
+                    html = f'<a href="{href}">Verify account</a>'
+                    self.assertEqual(extract_verification_link(html), href)
+
     def test_rejects_invalid_unbracketed_dns_and_ipv4_hosts(self):
         hrefs = (
             "https://example^.test/verify",
@@ -640,6 +664,23 @@ class VerificationLinkExtractionTest(unittest.TestCase):
             "https://例子.测试:8443/verify",
             "https://192.0.2.1/verify",
             "https://192.0.2.1:8443/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertEqual(extract_verification_link(html), href)
+
+    def test_rejects_invalid_idna_alabel_round_trip(self):
+        href = "https://xn--abc.test/verify"
+        html = f'<a href="{href}">Verify account</a>'
+
+        self.assertIsNone(extract_verification_link(html))
+
+    def test_accepts_valid_alabel_and_unicode_idn_original_urls(self):
+        hrefs = (
+            "https://xn--fsqu00a.xn--0zwm56d/verify",
+            "https://例子.测试/verify",
         )
 
         for href in hrefs:
@@ -676,6 +717,30 @@ class VerificationLinkExtractionTest(unittest.TestCase):
             "https://[fe80::1%25eth0]:8443/verify",
             "https://[v1.fe]/verify",
             "https://[vF.a:b]:443/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertEqual(extract_verification_link(html), href)
+
+    def test_rejects_invalid_ipv6_zone_identifiers(self):
+        hrefs = (
+            "https://[fe80::1%eth0]/verify",
+            "https://[fe80::1%25]/verify",
+            "https://[fe80::1%25eth0%GG]/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertIsNone(extract_verification_link(html))
+
+    def test_accepts_strict_ipv6_zone_identifier_forms(self):
+        hrefs = (
+            "https://[fe80::1%25eth0]/verify",
+            "https://[fe80::1%25eth0]:8443/verify",
+            "https://[fe80::1%25eth0%2Dblue]/verify",
         )
 
         for href in hrefs:

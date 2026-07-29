@@ -1291,6 +1291,70 @@ else:
             },
         )
 
+    def test_query_skips_latest_message_with_invalid_raw_port(self):
+        malformed_href = "https://example.test:+80/verify"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": f'<a href="{malformed_href}">Verify</a>',
+                "sendEmail": "first@example.test",
+                "subject": "Verify first",
+                "createTime": "2026-07-29 10:00:00",
+            },
+            {
+                "text": "Your verification code is 654321",
+                "sendEmail": "second@example.test",
+                "subject": "Code second",
+                "createTime": "2026-07-29 09:00:00",
+            },
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "654321",
+                "verification_url": "",
+                "sender": "second@example.test",
+                "subject": "Code second",
+                "received_time": "2026-07-29 09:00:00",
+            },
+        )
+
+    def test_query_skips_latest_message_with_invalid_host_identity(self):
+        malformed_hrefs = (
+            "https://xn--abc.test/verify",
+            "https://[fe80::1%eth0]/verify",
+        )
+
+        for malformed_href in malformed_hrefs:
+            with self.subTest(malformed_href=malformed_href):
+                client = CloudMailClient.__new__(CloudMailClient)
+                client._email_list = lambda **_: [
+                    {
+                        "content": f'<a href="{malformed_href}">Verify</a>',
+                        "sendEmail": "first@example.test",
+                        "subject": "Verify first",
+                        "createTime": "2026-07-29 10:00:00",
+                    },
+                    {
+                        "text": "Your verification code is 654321",
+                        "sendEmail": "second@example.test",
+                        "subject": "Code second",
+                        "createTime": "2026-07-29 09:00:00",
+                    },
+                ]
+
+                self.assertEqual(
+                    client.query_verification_detail("a@example.com"),
+                    {
+                        "code": "654321",
+                        "verification_url": "",
+                        "sender": "second@example.test",
+                        "subject": "Code second",
+                        "received_time": "2026-07-29 09:00:00",
+                    },
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

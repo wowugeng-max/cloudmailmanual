@@ -109,8 +109,11 @@ parser-produced visible HTML text is replaced with equal-length spaces in a
 masked copy. This preserves character positions while ensuring neither the
 current URL nor any neighboring URL can contribute action terms as visible
 text evidence. When a 160-character context edge truncates existing text, one
-additional masked boundary character is retained. This prevents slicing
-`unverify` or `verifyx` into an artificial standalone `verify` term.
+synthetic ASCII letter sentinel is added only when the cut falls between two
+ASCII alphanumeric characters. The sentinel is scoring metadata, not a 161st
+real context character. This prevents slicing `unverify` or `verifyx` into an
+artificial standalone `verify` term without admitting action text outside the
+160-character window.
 
 HTML character references in visible text are interpreted as the user sees
 them, so `&amp;` becomes `&`. Anchor `href` values retain their exact
@@ -126,21 +129,27 @@ Every candidate uses the existing absolute-URL validation:
 - Hostname must be present, contain no literal backslash, and have no empty
   interior labels such as `example..test`.
 - An authority beginning with `[` must contain exactly one matching bracket
-  pair. Its bracketed host must be a valid IPv6 address, including supported
-  zone identifiers, or a valid RFC IPvFuture literal. Bracketed DNS names and
-  IPv4 addresses are rejected.
+  pair. Its bracketed host must be a valid IPv6 address or a valid RFC
+  IPvFuture literal. An IPv6 zone uses the original URI form `%25` followed by
+  a non-empty ZoneID containing only unreserved characters or `%HH` escapes;
+  raw `%`, empty zones, and malformed escapes are rejected. Bracketed DNS
+  names and IPv4 addresses are rejected.
 - After the unique `]` in a bracketed authority, the remaining netloc must be
-  empty or exactly `:` followed by a non-empty port accepted by `parsed.port`.
-  Text suffixes and any additional `[` or `]` characters are rejected.
+  empty or exactly `:` followed by a raw ASCII decimal port also accepted by
+  `parsed.port`. Text suffixes and any additional `[` or `]` characters are
+  rejected.
 - A non-bracketed authority rejects any `[` or `]` character and any hostname
   containing `:`. Unicode hostnames are converted with the stdlib IDNA codec.
+  The resulting ASCII hostname must survive IDNA decode-then-encode round-trip,
+  rejecting malformed A-labels while preserving valid A-label and Unicode URL
+  spelling in the returned candidate.
   Numeric-and-dot-only hosts must pass `IPv4Address`; other encoded labels may
   contain only ASCII letters, digits, and hyphens, may not start or end with a
   hyphen, and must stay within 63 characters. The full hostname is limited to
   253 encoded characters, with one trailing dot retained for compatibility.
-- An explicit empty port marker is rejected. Accessing `parsed.port` continues
-  to reject non-numeric and out-of-range ports while ordinary ports remain
-  valid.
+- When either authority form contains a port, the original port text must be
+  non-empty ASCII decimal digits. Accessing `parsed.port` continues to reject
+  out-of-range values; `0`, leading-zero forms, and `65535` remain valid.
 - Embedded username/password values are rejected.
 - Whitespace and control characters anywhere in the original candidate are
   rejected without trimming.
@@ -156,12 +165,12 @@ The existing score remains the basis for selection:
   cannot qualify a candidate by themselves.
 - Footer terms reduce a candidate's score.
 
-For a bare URL, the candidate's text evidence includes 160 visible characters
-before and after the URL in the same HTML or plain-text body, plus one boundary
-character on each side when the window truncates existing text. This allows
-copy such as "Activate your account" to qualify a generic token URL without
-treating every token-bearing URL as a verification action or inventing action
-word boundaries.
+For a bare URL, the candidate's text evidence includes exactly 160 real visible
+characters before and after the URL in the same HTML or plain-text body. A
+synthetic letter sentinel may be attached at a cut ASCII word edge, but the
+161st real character is never included. This allows copy such as "Activate
+your account" to qualify a generic token URL without treating every
+token-bearing URL as a verification action or inventing action word boundaries.
 
 Occurrences with the same `href` but different visible text or nearby context
 are validated and scored independently. Exact duplicate `(href, text)`
@@ -269,9 +278,10 @@ Add focused service and client tests for:
 - Anchor `href` values with encoded newlines, tabs, or surrounding spaces being
   rejected without normalization, while empty hrefs are skipped.
 - Invalid DNS characters and labels, malformed numeric IPv4 hosts, empty ports,
+  signed or non-ASCII raw ports, malformed A-labels, invalid IPv6 ZoneIDs,
   consecutive hostname dots, literal host backslashes, and out-of-range ports
-  being rejected while IDN, IPv4, IPv6, trailing-dot DNS, and ordinary ports
-  remain valid.
+  being rejected while valid A-label/Unicode IDN, IPv4, IPv6 `%25` zones,
+  trailing-dot DNS, and ASCII decimal ports remain valid.
 - Bracketed IPv6 authorities with `]evil` or additional `]` suffixes being
   rejected while no-port and valid-port forms remain accepted.
 - A patch-based contract proving visible HTML parsing is deferred when the

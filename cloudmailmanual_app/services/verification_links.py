@@ -47,8 +47,12 @@ _IPV_FUTURE_PATTERN = re.compile(
 _DNS_LABEL_PATTERN = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 )
+_ZONE_ID_PATTERN = re.compile(
+    r"(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+"
+)
 _MAX_DNS_HOST_LENGTH = 253
 _TEXT_CONTEXT_RADIUS = 160
+_CONTEXT_WORD_SENTINEL = "Z"
 _TRAILING_SENTENCE_PUNCTUATION = ".,!"
 _CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
 
@@ -175,6 +179,47 @@ def _has_forbidden_url_characters(value: str) -> bool:
     )
 
 
+def _has_valid_raw_port(raw_port: str, port: Optional[int]) -> bool:
+    return (
+        bool(raw_port)
+        and raw_port.isascii()
+        and raw_port.isdigit()
+        and port is not None
+    )
+
+
+def _encode_valid_idna_hostname(hostname: str) -> Optional[str]:
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii")
+        unicode_hostname = ascii_hostname.encode("ascii").decode("idna")
+        round_trip = unicode_hostname.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+
+    if round_trip.casefold() != ascii_hostname.casefold():
+        return None
+    return ascii_hostname
+
+
+def _has_valid_ipv6_literal(bracketed_host: str) -> bool:
+    zone_delimiter = bracketed_host.find("%")
+    if zone_delimiter < 0:
+        ipv6_text = bracketed_host
+    else:
+        if not bracketed_host.startswith("%25", zone_delimiter):
+            return False
+        ipv6_text = bracketed_host[:zone_delimiter]
+        zone_id = bracketed_host[zone_delimiter + 3:]
+        if not zone_id or not _ZONE_ID_PATTERN.fullmatch(zone_id):
+            return False
+
+    try:
+        IPv6Address(ipv6_text)
+    except ValueError:
+        return False
+    return True
+
+
 def _has_valid_host_shape(
     parsed: SplitResult,
     hostname: str,
@@ -190,28 +235,26 @@ def _has_valid_host_shape(
         closing_bracket = netloc.find("]")
         bracketed_host = netloc[1:closing_bracket]
         suffix = netloc[closing_bracket + 1:]
-        has_valid_suffix = not suffix or (
-            suffix.startswith(":")
-            and len(suffix) > 1
-            and port is not None
-        )
-        if not has_valid_suffix:
+        if suffix and (
+            not suffix.startswith(":")
+            or not _has_valid_raw_port(suffix[1:], port)
+        ):
             return False
 
         if _IPV_FUTURE_PATTERN.fullmatch(bracketed_host):
             return True
-        try:
-            IPv6Address(bracketed_host)
-        except ValueError:
-            return False
-        return True
+        return _has_valid_ipv6_literal(bracketed_host)
 
     if "[" in netloc or "]" in netloc or ":" in hostname:
         return False
 
-    try:
-        ascii_hostname = hostname.encode("idna").decode("ascii")
-    except UnicodeError:
+    authority = netloc.rsplit("@", 1)[-1]
+    _, port_separator, raw_port = authority.rpartition(":")
+    if port_separator and not _has_valid_raw_port(raw_port, port):
+        return False
+
+    ascii_hostname = _encode_valid_idna_hostname(hostname)
+    if ascii_hostname is None:
         return False
 
     if ascii_hostname.endswith("."):
@@ -327,6 +370,10 @@ def _literal_http_url_spans(value: str) -> List[Tuple[int, int]]:
     return spans
 
 
+def _is_ascii_alphanumeric(character: str) -> bool:
+    return character.isascii() and character.isalnum()
+
+
 def mask_http_urls(value: str) -> str:
     if not isinstance(value, str):
         return ""
@@ -361,17 +408,28 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
             continue
 
         before_start = max(0, match.start() - _TEXT_CONTEXT_RADIUS)
-        if before_start:
-            before_start -= 1
+        before = masked_value[before_start:match.start()]
+        if (
+            before_start
+            and before
+            and _is_ascii_alphanumeric(masked_value[before_start - 1])
+            and _is_ascii_alphanumeric(before[0])
+        ):
+            before = f"{_CONTEXT_WORD_SENTINEL}{before}"
+
         after_end = min(
             len(masked_value),
             match.end() + _TEXT_CONTEXT_RADIUS,
         )
-        if after_end < len(masked_value):
-            after_end += 1
-
-        before = masked_value[before_start:match.start()]
         after = masked_value[match.end():after_end]
+        if (
+            after_end < len(masked_value)
+            and after
+            and _is_ascii_alphanumeric(after[-1])
+            and _is_ascii_alphanumeric(masked_value[after_end])
+        ):
+            after = f"{after}{_CONTEXT_WORD_SENTINEL}"
+
         candidates.append(_Anchor(href=href, text=f"{before} {after}"))
     return candidates
 

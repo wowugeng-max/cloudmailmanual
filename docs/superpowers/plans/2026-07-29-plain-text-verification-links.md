@@ -275,17 +275,28 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
             continue
 
         before_start = max(0, match.start() - _TEXT_CONTEXT_RADIUS)
-        if before_start:
-            before_start -= 1
+        before = masked_value[before_start:match.start()]
+        if (
+            before_start
+            and before
+            and _is_ascii_alphanumeric(masked_value[before_start - 1])
+            and _is_ascii_alphanumeric(before[0])
+        ):
+            before = f"{_CONTEXT_WORD_SENTINEL}{before}"
+
         after_end = min(
             len(masked_value),
             match.end() + _TEXT_CONTEXT_RADIUS,
         )
-        if after_end < len(masked_value):
-            after_end += 1
-
-        before = masked_value[before_start:match.start()]
         after = masked_value[match.end():after_end]
+        if (
+            after_end < len(masked_value)
+            and after
+            and _is_ascii_alphanumeric(after[-1])
+            and _is_ascii_alphanumeric(masked_value[after_end])
+        ):
+            after = f"{after}{_CONTEXT_WORD_SENTINEL}"
+
         candidates.append(_Anchor(href=href, text=f"{before} {after}"))
     return candidates
 ```
@@ -293,8 +304,10 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
 Mask every matched URL span with equal-length spaces before slicing context. Do
 not include the current or any neighboring URL in `text`; action terms inside
 `token`, `signature`, and other opaque URL values must remain URL evidence only.
-Retain one masked boundary character whenever either 160-character edge cuts
-through existing text so slicing cannot manufacture a standalone action term.
+Keep exactly 160 real characters on each side. When a cut falls between two
+ASCII alphanumeric characters, attach a synthetic ASCII letter sentinel at the
+affected edge so slicing cannot manufacture a standalone action term. Never
+include the 161st real character.
 
 - [ ] **Step 5: Separate text scoring from parsed URL evidence**
 
@@ -397,19 +410,20 @@ def extract_verification_link(
 Do not trim anchor `href` values. Preserve the parser-provided candidate
 exactly for deduplication, validation, scoring, and return. Empty values are
 skipped; any whitespace or control character causes validation failure. Reject
-empty port markers, hostname empty labels, and literal host backslashes while
-continuing to accept ordinary explicit ports. Access `parsed.port` so invalid
-and out-of-range ports continue to raise and reject. Determine bracketed
-authority from `parsed.netloc.startswith("[")`, require exactly one `[` and one
-matching `]`, and accept only valid IPv6 literals (including supported zone
-identifiers) or RFC IPvFuture literals inside the brackets. Reject bracketed
-DNS names and IPv4 addresses. After `]`, accept only an empty suffix or `:`
-followed by a non-empty port validated by `parsed.port`; reject text suffixes
-and any additional bracket. For non-bracketed authority, reject all brackets
-and colon-containing hostnames, convert Unicode through stdlib IDNA, require
-numeric-and-dot-only hosts to pass `IPv4Address`, and validate every other
-encoded label for ASCII alphanumeric/hyphen syntax, non-hyphen edges, 63-byte
-label limits, and a 253-character whole-host limit. Preserve one trailing dot.
+empty port markers, hostname empty labels, and literal host backslashes. Read
+port text from the original bracket suffix or unbracketed authority and require
+non-empty ASCII decimal digits; continue using `parsed.port` for numeric range.
+Determine bracketed authority from `parsed.netloc.startswith("[")`, require
+exactly one `[` and one matching `]`, and accept only valid IPv6 or RFC
+IPvFuture literals. IPv6 zones must use `%25` plus a non-empty ZoneID made only
+of unreserved characters or `%HH` escapes. Reject bracketed DNS names and IPv4
+addresses, text suffixes, raw/empty zone delimiters, and additional brackets.
+For non-bracketed authority, reject all brackets and colon-containing
+hostnames, convert Unicode through stdlib IDNA, require decode-encode round-trip
+identity for ASCII A-labels, require numeric-and-dot-only hosts to pass
+`IPv4Address`, and validate every other encoded label for ASCII
+alphanumeric/hyphen syntax, non-hyphen edges, 63-byte label limits, and a
+253-character whole-host limit. Preserve one trailing dot.
 
 Skip only exact duplicate `(href, candidate.text)` evidence. Different
 occurrences with different labels or nearby context remain independently
