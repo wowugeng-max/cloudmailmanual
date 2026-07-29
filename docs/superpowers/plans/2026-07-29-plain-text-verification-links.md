@@ -4,7 +4,7 @@
 
 **Goal:** Recognize verification links that appear as complete URLs in visible HTML or plain-text email bodies while preserving the existing safe link, history, and account-state behavior.
 
-**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus visible-text content, then scan visible HTML and plain text with a bounded HTTP(S) URL matcher. Feed every candidate through the existing URL validator and action-term scorer, excluding the URL itself from nearby text evidence so opaque token values cannot create false positives. Pass both message body representations from `CloudMailClient` without changing routes, persistence, or UI contracts.
+**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus visible-text content, then scan visible HTML and plain text with a bounded HTTP(S) URL matcher. Mask every matched URL span before collecting nearby text, feed distinct candidate evidence through the existing URL validator and action-term scorer, and cache URL work by `href` within one extraction call. Pass both message body representations from `CloudMailClient` without changing routes, persistence, or UI contracts.
 
 **Tech Stack:** Python 3.9, stdlib `html.parser`, `re`, `urllib.parse`, `unittest`, `pytest`, existing Flask application and Node VM UI tests.
 
@@ -84,7 +84,9 @@ def test_action_word_inside_opaque_bare_token_is_not_text_evidence(self):
     self.assertIsNone(extract_verification_link("", text))
 ```
 
-The second test is critical: nearby context must exclude the URL itself, otherwise `confirm` inside an opaque token would bypass the existing false-positive protection.
+The second test is critical: nearby context must exclude every matched URL span,
+otherwise `confirm` inside the current or a neighboring opaque token could
+bypass the existing false-positive protection.
 
 - [ ] **Step 4: Add invisible-content, punctuation, and no-reconstruction tests**
 
@@ -146,9 +148,9 @@ git commit -m "test: define plain-text verification link contract"
 - Modify: `cloudmailmanual_app/services/verification_links.py:1-245`
 - Test: `tests/test_verification_links.py`
 
-- [ ] **Step 1: Add repeated-href context regression coverage**
+- [ ] **Step 1: Add repeated-link context and caching regression coverage**
 
-Add this test to `VerificationLinkExtractionTest`:
+Add these context tests to `VerificationLinkExtractionTest`:
 
 ```python
 def test_repeated_href_uses_strongest_occurrence_context(self):
@@ -159,11 +161,29 @@ def test_repeated_href_uses_strongest_occurrence_context(self):
     )
 
     self.assertEqual(extract_verification_link(html), href)
+
+
+def test_repeated_opaque_urls_do_not_become_nearby_action_text(self):
+    href = "https://example.test/account?token=prefix-confirm-suffix"
+    text = f"Account details: {href} {href}"
+
+    self.assertIsNone(extract_verification_link("", text))
 ```
 
-Run the test before changing production code. Expected: it fails because the
-anchor occurrence has no action evidence and must not suppress the visible-text
-occurrence with stronger nearby context.
+Also add non-timing call-count tests using `unittest.mock.patch`:
+
+- Many identical bare candidates with the same masked context call
+  `_score_with_url_evidence` once.
+- The same `href` with two different contexts calls validation once,
+  `urlsplit` twice total (validation plus evidence), `_url_evidence` once, and
+  `_score_with_url_evidence` twice.
+
+Run the tests before changing production code. Expected: the positive repeated
+context test fails because the anchor occurrence suppresses stronger nearby
+context in the original implementation; the opaque URL test fails because one
+URL leaks into the other's nearby text; the call-count tests fail because exact
+candidates and per-`href` URL work are repeated. Do not use wall-clock timing in
+these tests.
 
 - [ ] **Step 2: Add bounded URL-matching constants**
 
@@ -216,21 +236,74 @@ def _trim_bare_url_candidate(value: str) -> str:
 
 
 def _bare_url_candidates(value: str) -> List[_Anchor]:
+    matches = list(_BARE_HTTP_URL_PATTERN.finditer(value))
+    if not matches:
+        return []
+
+    masked_parts: List[str] = []
+    previous_end = 0
+    for match in matches:
+        masked_parts.append(value[previous_end:match.start()])
+        masked_parts.append(" " * (match.end() - match.start()))
+        previous_end = match.end()
+    masked_parts.append(value[previous_end:])
+    masked_value = "".join(masked_parts)
+
     candidates: List[_Anchor] = []
-    for match in _BARE_HTTP_URL_PATTERN.finditer(value):
+    for match in matches:
         href = _trim_bare_url_candidate(match.group(0))
         if not href:
             continue
 
-        before = value[max(0, match.start() - _TEXT_CONTEXT_RADIUS):match.start()]
-        after = value[match.end():match.end() + _TEXT_CONTEXT_RADIUS]
+        before = masked_value[
+            max(0, match.start() - _TEXT_CONTEXT_RADIUS):match.start()
+        ]
+        after = masked_value[
+            match.end():match.end() + _TEXT_CONTEXT_RADIUS
+        ]
         candidates.append(_Anchor(href=href, text=f"{before} {after}"))
     return candidates
 ```
 
-Do not include `match.group(0)` in `text`; action terms inside `token`, `signature`, and other opaque URL values must remain URL evidence only.
+Mask every matched URL span with equal-length spaces before slicing context. Do
+not include the current or any neighboring URL in `text`; action terms inside
+`token`, `signature`, and other opaque URL values must remain URL evidence only.
 
-- [ ] **Step 5: Update the public extractor while preserving compatibility**
+- [ ] **Step 5: Separate text scoring from parsed URL evidence**
+
+Add a helper that accepts already-computed URL evidence, and keep `_score()` as
+the compatibility wrapper:
+
+```python
+def _score_with_url_evidence(
+    text: str,
+    url_evidence: Tuple[str, ...],
+) -> Optional[int]:
+    action_text = _count_terms(text, _ACTION_TERMS)
+    action_url = _count_terms_in_values(url_evidence, _ACTION_TERMS)
+    if not action_text and not action_url:
+        return None
+
+    combined = (text, *url_evidence)
+    support = _count_terms_in_values(combined, _SUPPORT_TERMS)
+    footer = _count_terms_in_values(combined, _FOOTER_TERMS)
+    return (
+        action_text * _TEXT_ACTION_WEIGHT
+        + action_url * _URL_ACTION_WEIGHT
+        + support * _SUPPORT_WEIGHT
+        - footer * _FOOTER_PENALTY
+    )
+
+
+def _score(anchor: _Anchor) -> Optional[int]:
+    parsed = urlsplit(anchor.href)
+    return _score_with_url_evidence(anchor.text, _url_evidence(parsed))
+```
+
+This preserves `_score()` behavior while allowing `extract_verification_link()`
+to reuse cached evidence across occurrences of the same `href`.
+
+- [ ] **Step 6: Update the public extractor while preserving compatibility**
 
 Replace `extract_verification_link()` with:
 
@@ -259,16 +332,34 @@ def extract_verification_link(
         *_bare_url_candidates(raw_text),
     ]
 
+    seen_candidates = set()
+    validation_by_href = {}
+    url_evidence_by_href = {}
     best_href: Optional[str] = None
     best_score: Optional[int] = None
     for candidate in candidates:
         href = candidate.href.strip()
         if not href:
             continue
-        if not _is_absolute_http_url(href):
+
+        candidate_key = (href, candidate.text)
+        if candidate_key in seen_candidates:
+            continue
+        seen_candidates.add(candidate_key)
+
+        if href not in validation_by_href:
+            validation_by_href[href] = _is_absolute_http_url(href)
+        if not validation_by_href[href]:
             continue
 
-        score = _score(_Anchor(href, candidate.text))
+        if href not in url_evidence_by_href:
+            parsed = urlsplit(href)
+            url_evidence_by_href[href] = _url_evidence(parsed)
+
+        score = _score_with_url_evidence(
+            candidate.text,
+            url_evidence_by_href[href],
+        )
         if score is not None and (best_score is None or score > best_score):
             best_href = href
             best_score = score
@@ -276,14 +367,15 @@ def extract_verification_link(
     return best_href
 ```
 
-Validate and score every candidate occurrence, even when its `href` appeared
-earlier. Different occurrences may have different labels or nearby context;
-the strict `score > best_score` comparison keeps the earliest occurrence when
-their scores tie.
+Skip only exact duplicate `(href, candidate.text)` evidence. Different
+occurrences with different labels or nearby context remain independently
+scored. Cache absolute-URL validation and parsed URL evidence by `href` for the
+duration of one extraction call. The strict `score > best_score` comparison
+keeps the earliest occurrence when scores tie.
 
 Keep the existing `RuntimeError` propagation test green: unexpected parser failures must not be converted into a false successful result.
 
-- [ ] **Step 6: Run the full parser suite**
+- [ ] **Step 7: Run the full parser suite**
 
 Run:
 
@@ -292,10 +384,11 @@ Run:
 ```
 
 Expected: every anchor and bare-link parser test passes, including opaque-token,
-malformed URL, invisible-content, repeated-href context, and exact-href
+all-URL context masking, malformed URL, invisible-content, repeated-href
+context, exact-candidate deduplication, per-`href` caching, and exact-href
 preservation cases.
 
-- [ ] **Step 7: Check formatting and commit the parser implementation**
+- [ ] **Step 8: Check formatting and commit the parser implementation**
 
 Run:
 
@@ -493,8 +586,9 @@ The reviewer must inspect the complete `origin/main...HEAD` range for parser fal
 
 - [x] Every design goal maps to a parser or client task.
 - [x] Visible HTML, plain text, full-URL anchor labels, long queries, nearby context, invisible content, sentence punctuation, and whitespace boundaries have explicit tests.
-- [x] The plan explicitly excludes the URL itself from nearby text evidence, preserving opaque-token false-positive protection.
-- [x] Repeated identical `href` occurrences retain their separate contexts and are all scored, with collection order breaking ties.
+- [x] The plan masks every URL span from nearby text evidence, preserving opaque-token false-positive protection across repeated links.
+- [x] Repeated `href` occurrences with different contexts remain independent, while exact duplicate `(href, text)` evidence is scored once and collection order breaks ties.
+- [x] Absolute-URL validation and parsed URL evidence are cached once per `href` within each extraction call.
 - [x] Existing callers remain compatible through the optional `raw_text` argument.
 - [x] No route, database, UI, Webmail, network, decoding, or persistence changes are introduced.
 - [x] The final task verifies the entire pre-existing verification-link feature before merging to `main`.

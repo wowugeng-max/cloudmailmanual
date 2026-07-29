@@ -220,27 +220,45 @@ def _trim_bare_url_candidate(value: str) -> str:
 
 
 def _bare_url_candidates(value: str) -> List[_Anchor]:
+    matches = list(_BARE_HTTP_URL_PATTERN.finditer(value))
+    if not matches:
+        return []
+
+    masked_parts: List[str] = []
+    previous_end = 0
+    for match in matches:
+        masked_parts.append(value[previous_end:match.start()])
+        masked_parts.append(" " * (match.end() - match.start()))
+        previous_end = match.end()
+    masked_parts.append(value[previous_end:])
+    masked_value = "".join(masked_parts)
+
     candidates: List[_Anchor] = []
-    for match in _BARE_HTTP_URL_PATTERN.finditer(value):
+    for match in matches:
         href = _trim_bare_url_candidate(match.group(0))
         if not href:
             continue
 
-        before = value[max(0, match.start() - _TEXT_CONTEXT_RADIUS):match.start()]
-        after = value[match.end():match.end() + _TEXT_CONTEXT_RADIUS]
+        before = masked_value[
+            max(0, match.start() - _TEXT_CONTEXT_RADIUS):match.start()
+        ]
+        after = masked_value[
+            match.end():match.end() + _TEXT_CONTEXT_RADIUS
+        ]
         candidates.append(_Anchor(href=href, text=f"{before} {after}"))
     return candidates
 
 
-def _score(anchor: _Anchor) -> Optional[int]:
-    parsed = urlsplit(anchor.href)
-    url_evidence = _url_evidence(parsed)
-    action_text = _count_terms(anchor.text, _ACTION_TERMS)
+def _score_with_url_evidence(
+    text: str,
+    url_evidence: Tuple[str, ...],
+) -> Optional[int]:
+    action_text = _count_terms(text, _ACTION_TERMS)
     action_url = _count_terms_in_values(url_evidence, _ACTION_TERMS)
     if not action_text and not action_url:
         return None
 
-    combined = (anchor.text, *url_evidence)
+    combined = (text, *url_evidence)
     support = _count_terms_in_values(combined, _SUPPORT_TERMS)
     footer = _count_terms_in_values(combined, _FOOTER_TERMS)
     return (
@@ -249,6 +267,11 @@ def _score(anchor: _Anchor) -> Optional[int]:
         + support * _SUPPORT_WEIGHT
         - footer * _FOOTER_PENALTY
     )
+
+
+def _score(anchor: _Anchor) -> Optional[int]:
+    parsed = urlsplit(anchor.href)
+    return _score_with_url_evidence(anchor.text, _url_evidence(parsed))
 
 
 def extract_verification_link(
@@ -275,16 +298,34 @@ def extract_verification_link(
         *_bare_url_candidates(raw_text),
     ]
 
+    seen_candidates = set()
+    validation_by_href = {}
+    url_evidence_by_href = {}
     best_href: Optional[str] = None
     best_score: Optional[int] = None
     for candidate in candidates:
         href = candidate.href.strip()
         if not href:
             continue
-        if not _is_absolute_http_url(href):
+
+        candidate_key = (href, candidate.text)
+        if candidate_key in seen_candidates:
+            continue
+        seen_candidates.add(candidate_key)
+
+        if href not in validation_by_href:
+            validation_by_href[href] = _is_absolute_http_url(href)
+        if not validation_by_href[href]:
             continue
 
-        score = _score(_Anchor(href, candidate.text))
+        if href not in url_evidence_by_href:
+            parsed = urlsplit(href)
+            url_evidence_by_href[href] = _url_evidence(parsed)
+
+        score = _score_with_url_evidence(
+            candidate.text,
+            url_evidence_by_href[href],
+        )
         if score is not None and (best_score is None or score > best_score):
             best_href = href
             best_score = score

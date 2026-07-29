@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from cloudmailmanual_app.services import verification_links
 from cloudmailmanual_app.services.verification_links import extract_verification_link
 
 
@@ -54,6 +55,59 @@ class VerificationLinkExtractionTest(unittest.TestCase):
         )
 
         self.assertIsNone(extract_verification_link("", text))
+
+    def test_repeated_opaque_urls_do_not_become_nearby_action_text(self):
+        href = "https://example.test/account?token=prefix-confirm-suffix"
+        text = f"Account details: {href} {href}"
+
+        self.assertIsNone(extract_verification_link("", text))
+
+    def test_identical_candidates_are_scored_once(self):
+        href = "https://example.test/verify?token=synthetic-value"
+        padding = "x" * 160
+        text = "".join(
+            f"{padding} {href} {padding}"
+            for _ in range(100)
+        )
+
+        with patch.object(
+            verification_links,
+            "_score_with_url_evidence",
+            return_value=10,
+            create=True,
+        ) as score:
+            self.assertEqual(extract_verification_link("", text), href)
+
+        score.assert_called_once()
+
+    def test_repeated_href_caches_validation_and_url_evidence(self):
+        href = "https://example.test/verify?token=synthetic-value"
+        text = f"First context {href} {'x' * 400} {href} second context"
+
+        with patch.object(
+            verification_links,
+            "_is_absolute_http_url",
+            wraps=verification_links._is_absolute_http_url,
+        ) as validate, patch.object(
+            verification_links,
+            "urlsplit",
+            wraps=verification_links.urlsplit,
+        ) as split, patch.object(
+            verification_links,
+            "_url_evidence",
+            wraps=verification_links._url_evidence,
+        ) as url_evidence, patch.object(
+            verification_links,
+            "_score_with_url_evidence",
+            return_value=10,
+            create=True,
+        ) as score:
+            self.assertEqual(extract_verification_link("", text), href)
+
+        validate.assert_called_once_with(href)
+        self.assertEqual(split.call_count, 2)
+        self.assertEqual(url_evidence.call_count, 1)
+        self.assertEqual(score.call_count, 2)
 
     def test_ignores_bare_links_inside_invisible_html_content(self):
         html = (

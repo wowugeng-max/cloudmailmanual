@@ -70,6 +70,11 @@ delimiters. Candidate cleanup may remove only common sentence punctuation and
 unmatched closing brackets at the end. It must not alter query parameters,
 fragments, percent escapes, JWT-like values, or internal punctuation.
 
+Before nearby context is sliced, every URL match in the source body is replaced
+with equal-length spaces in a masked copy. This preserves character positions
+while ensuring neither the current URL nor any neighboring URL can contribute
+action terms as visible text evidence.
+
 HTML character references in visible text are interpreted as the user sees
 them, so `&amp;` becomes `&`. Anchor `href` values retain their parser-provided
 value. No additional URL decoding is performed.
@@ -99,11 +104,16 @@ characters before and after the URL in the same HTML or plain-text body. This
 allows copy such as "Activate your account" to qualify a generic token URL
 without treating every token-bearing URL as a verification action.
 
-Every occurrence is validated and scored independently. The highest-scoring
-candidate wins, including when multiple occurrences have the same `href`.
-Ties retain the first candidate in the collection order defined above. A URL
-containing `verify-email` in its path qualifies even when its visible label is
-the URL itself.
+Occurrences with the same `href` but different visible text or nearby context
+are validated and scored independently. Exact duplicate `(href, text)`
+candidates are skipped. Within one extraction call, absolute-URL validation and
+parsed URL evidence are cached by `href`, so repeated contexts reuse URL work
+without sharing their text score.
+
+The highest-scoring candidate wins, including when multiple occurrences have
+the same `href`. Ties retain the first candidate in the collection order
+defined above. A URL containing `verify-email` in its path qualifies even when
+its visible label is the URL itself.
 
 ## Client Integration
 
@@ -147,6 +157,9 @@ Add focused service and client tests for:
 - A generic token URL qualified by nearby "activate" or "confirm" copy.
 - The same `href` in multiple occurrences, with the strongest occurrence
   context determining whether it qualifies.
+- Repeated opaque URLs not becoming action text for one another.
+- Exact duplicate candidate evidence being scored once, with validation and
+  parsed URL evidence cached once per `href`.
 - Multiple candidates where the strongest action link wins.
 - URLs in `script`, `style`, and `template` content being ignored.
 - Ordinary, footer, token-only, relative, credential-bearing, malformed, and
