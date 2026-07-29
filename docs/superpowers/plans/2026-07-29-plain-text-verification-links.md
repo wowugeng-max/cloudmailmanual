@@ -378,11 +378,16 @@ Do not trim anchor `href` values. Preserve the parser-provided candidate
 exactly for deduplication, validation, scoring, and return. Empty values are
 skipped; any whitespace or control character causes validation failure. Reject
 empty port markers, hostname empty labels, and literal host backslashes while
-continuing to accept bracketed IPv6 and ordinary explicit ports. Access
-`parsed.port` so invalid and out-of-range ports continue to raise and reject.
-For bracketed IPv6, find the matching `]` and accept only an empty netloc
-suffix or `:` followed by a non-empty port validated by `parsed.port`; reject
-text suffixes and extra `]` characters.
+continuing to accept ordinary explicit ports. Access `parsed.port` so invalid
+and out-of-range ports continue to raise and reject. Determine bracketed
+authority from `parsed.netloc.startswith("[")`, require exactly one `[` and one
+matching `]`, and accept only valid IPv6 literals (including supported zone
+identifiers) or RFC IPvFuture literals inside the brackets. Reject bracketed
+DNS names and IPv4 addresses. After `]`, accept only an empty suffix or `:`
+followed by a non-empty port validated by `parsed.port`; reject text suffixes
+and any additional bracket. For non-bracketed authority, reject all brackets
+and colon-containing hostnames while retaining the existing minimal DNS-label
+checks.
 
 Skip only exact duplicate `(href, candidate.text)` evidence. Different
 occurrences with different labels or nearby context remain independently

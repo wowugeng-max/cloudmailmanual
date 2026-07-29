@@ -117,10 +117,16 @@ Every candidate uses the existing absolute-URL validation:
 
 - Scheme must be `http` or `https`.
 - Hostname must be present, contain no literal backslash, and have no empty
-  interior labels such as `example..test`; bracketed IPv6 remains valid.
-- After the matching `]` in a bracketed IPv6 authority, the remaining netloc
-  must be empty or exactly `:` followed by a non-empty port accepted by
-  `parsed.port`. Text suffixes and additional `]` characters are rejected.
+  interior labels such as `example..test`.
+- An authority beginning with `[` must contain exactly one matching bracket
+  pair. Its bracketed host must be a valid IPv6 address, including supported
+  zone identifiers, or a valid RFC IPvFuture literal. Bracketed DNS names and
+  IPv4 addresses are rejected.
+- After the unique `]` in a bracketed authority, the remaining netloc must be
+  empty or exactly `:` followed by a non-empty port accepted by `parsed.port`.
+  Text suffixes and any additional `[` or `]` characters are rejected.
+- A non-bracketed authority rejects any `[` or `]` character and any hostname
+  containing `:`; ordinary DNS-label validation otherwise remains minimal.
 - An explicit empty port marker is rejected. Accessing `parsed.port` continues
   to reject non-numeric and out-of-range ports while ordinary ports remain
   valid.

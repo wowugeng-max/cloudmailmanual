@@ -528,11 +528,20 @@ class VerificationLinkExtractionTest(unittest.TestCase):
                 html = f'<a href="{href}">Verify account</a>'
                 self.assertEqual(extract_verification_link(html), href)
 
-    def test_rejects_invalid_suffixes_after_bracketed_ipv6_host(self):
+    def test_rejects_invalid_bracketed_host_grammar(self):
         hrefs = (
             "https://[2001:db8::1]evil/verify",
             "https://[2001:db8::1]]/verify",
             "https://[2001:db8::1]]:443/verify",
+            "https://[v1.fe]evil/verify",
+            "https://[v1.fe]]/verify",
+            "https://[[v1.fe]]/verify",
+            "https://[v1.f[e]/verify",
+            "https://[abc]/verify",
+            "https://[127.0.0.1]/verify",
+            "https://[v.fe]/verify",
+            "https://[v1.]/verify",
+            "https://[v1.a^b]/verify",
         )
 
         for href in hrefs:
@@ -540,16 +549,32 @@ class VerificationLinkExtractionTest(unittest.TestCase):
                 html = f'<a href="{href}">Verify account</a>'
                 self.assertIsNone(extract_verification_link(html))
 
-    def test_accepts_bracketed_ipv6_with_no_port_or_valid_port(self):
+    def test_accepts_valid_bracketed_ipv6_and_ipvfuture_hosts(self):
         hrefs = (
             "https://[2001:db8::1]/verify",
             "https://[2001:db8::1]:443/verify",
+            "https://[fe80::1%25eth0]/verify",
+            "https://[fe80::1%25eth0]:8443/verify",
+            "https://[v1.fe]/verify",
+            "https://[vF.a:b]:443/verify",
         )
 
         for href in hrefs:
             with self.subTest(href=href):
                 html = f'<a href="{href}">Verify account</a>'
                 self.assertEqual(extract_verification_link(html), href)
+
+    def test_rejects_brackets_or_colon_hosts_without_bracketed_authority(self):
+        hrefs = (
+            "https://example.test]/verify",
+            "https://example[test/verify",
+            "https://2001:db8::1/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertIsNone(extract_verification_link(html))
 
     def test_returns_none_for_non_string_html_without_parsing(self):
         parser_path = (

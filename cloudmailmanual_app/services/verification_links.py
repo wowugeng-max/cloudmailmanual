@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from ipaddress import IPv6Address
 from typing import List, Optional, Tuple
 from urllib.parse import SplitResult, urlsplit
 
@@ -40,6 +41,9 @@ _OPAQUE_VALUE_KEYS = {
 _PERCENT_ESCAPE_PATTERN = re.compile(r"%[0-9A-Fa-f]{2}")
 _ENCODED_QUERY_MARKER_PATTERN = re.compile(r"%3F", re.IGNORECASE)
 _BARE_HTTP_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_IPV_FUTURE_PATTERN = re.compile(
+    r"[vV][0-9A-Fa-f]+\.[A-Za-z0-9._~!$&'()*+,;=:\-]+"
+)
 _TEXT_CONTEXT_RADIUS = 160
 _TRAILING_SENTENCE_PUNCTUATION = ".,!"
 _CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
@@ -169,18 +173,34 @@ def _has_valid_host_shape(
     hostname: str,
     port: Optional[int],
 ) -> bool:
-    if parsed.netloc.endswith(":") or "\\" in parsed.netloc:
+    netloc = parsed.netloc
+    if netloc.endswith(":") or "\\" in netloc:
         return False
-    if ":" in hostname:
-        if not parsed.netloc.startswith("["):
+
+    if netloc.startswith("["):
+        if netloc.count("[") != 1 or netloc.count("]") != 1:
             return False
-        closing_bracket = parsed.netloc.find("]")
-        suffix = parsed.netloc[closing_bracket + 1:]
-        return not suffix or (
+        closing_bracket = netloc.find("]")
+        bracketed_host = netloc[1:closing_bracket]
+        suffix = netloc[closing_bracket + 1:]
+        has_valid_suffix = not suffix or (
             suffix.startswith(":")
             and len(suffix) > 1
             and port is not None
         )
+        if not has_valid_suffix:
+            return False
+
+        if _IPV_FUTURE_PATTERN.fullmatch(bracketed_host):
+            return True
+        try:
+            IPv6Address(bracketed_host)
+        except ValueError:
+            return False
+        return True
+
+    if "[" in netloc or "]" in netloc or ":" in hostname:
+        return False
 
     labels = hostname.split(".")
     if labels and not labels[-1]:
