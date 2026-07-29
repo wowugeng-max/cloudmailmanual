@@ -1290,7 +1290,7 @@ function resolveHistoryProfileId(email, storedProfileId) {
   return matchedProfileId || activeMailProfileId || '';
 }
 
-function updateHistoryRowUsage(row, email, used) {
+function updateHistoryRowUsage(row, email, used, platform = '') {
   if (used) {
     currentInUseEmail = email;
   } else if (currentInUseEmail && currentInUseEmail.toLowerCase() === String(email).toLowerCase()) {
@@ -1305,6 +1305,21 @@ function updateHistoryRowUsage(row, email, used) {
   if (statusCell) {
     statusCell.textContent = statusText;
     statusCell.setAttribute('data-copy', statusText);
+  }
+
+  const normalizedPlatform = String(platform || '').trim();
+  const platformCell = row.querySelector('[data-role="account-platform"]');
+  if (platformCell && normalizedPlatform) {
+    const platforms = String(platformCell.textContent || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (!platforms.includes(normalizedPlatform)) {
+      platforms.push(normalizedPlatform);
+    }
+    const platformText = platforms.join(', ');
+    platformCell.textContent = platformText;
+    platformCell.setAttribute('data-copy', platformText);
   }
 
   const actionButton = row.querySelector('.history-action-col button');
@@ -1359,11 +1374,11 @@ async function quickQueryCode(button) {
       result.textContent = data.code;
       result.title = '点击复制验证码';
       result.onclick = () => copyText(data.code);
-      updateHistoryRowUsage(row, email, true);
+      updateHistoryRowUsage(row, email, true, data.mark_platform);
       loadQueryHistory(1);
     } else {
       result.textContent = hasVerificationLink ? '仅发现验证链接' : '暂未查到';
-      updateHistoryRowUsage(row, email, false);
+      updateHistoryRowUsage(row, email, false, data.mark_platform);
     }
   } catch (e) {
     result.className = 'history-code-result err';
@@ -1442,7 +1457,7 @@ async function loadHistory(page) {
         <td class="history-age-col" data-copy="${age}">${age}</td>
         <td class="history-birthday-col" data-copy="${birthday}">${birthday}</td>
         <td class="history-status-col" data-role="account-status" data-copy="${isInUse ? '正在使用' : '未使用'}">${isInUse ? '正在使用' : '未使用'}</td>
-        <td class="history-platform-col" data-copy="${platforms}">${platforms}</td>
+        <td class="history-platform-col" data-role="account-platform" data-copy="${platforms}">${platforms}</td>
         <td class="history-time-col" data-copy="${usedAt}">${usedAt}</td>
         <td class="history-time-col" data-copy="${createdAt}">${createdAt}</td>
         <td class="history-action-col">
