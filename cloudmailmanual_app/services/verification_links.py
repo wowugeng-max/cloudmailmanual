@@ -35,6 +35,10 @@ _OPAQUE_VALUE_KEYS = {
 
 _PERCENT_ESCAPE_PATTERN = re.compile(r"%[0-9A-Fa-f]{2}")
 _ENCODED_QUERY_MARKER_PATTERN = re.compile(r"%3F", re.IGNORECASE)
+_BARE_HTTP_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_TEXT_CONTEXT_RADIUS = 160
+_TRAILING_SENTENCE_PUNCTUATION = ".,!"
+_CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
 
 _TERM_PATTERNS = {
     term: re.compile(
@@ -59,6 +63,7 @@ class _AnchorParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.anchors: List[_Anchor] = []
+        self.visible_text_parts: List[str] = []
         self._href: Optional[str] = None
         self._text_parts: List[str] = []
         self._invisible_depth = 0
@@ -108,7 +113,10 @@ class _AnchorParser(HTMLParser):
             self.anchors.append(_Anchor(href, ""))
 
     def handle_data(self, data: str) -> None:
-        if not self._invisible_depth and self._href is not None:
+        if self._invisible_depth:
+            return
+        self.visible_text_parts.append(data)
+        if self._href is not None:
             self._text_parts.append(data)
 
     def handle_endtag(self, tag: str) -> None:
@@ -200,6 +208,30 @@ def _url_evidence(parsed: SplitResult) -> Tuple[str, ...]:
     )
 
 
+def _trim_bare_url_candidate(value: str) -> str:
+    trimmed = value.rstrip(_TRAILING_SENTENCE_PUNCTUATION)
+    while trimmed and trimmed[-1] in _CLOSING_BRACKETS:
+        closing = trimmed[-1]
+        opening = _CLOSING_BRACKETS[closing]
+        if trimmed.count(opening) >= trimmed.count(closing):
+            break
+        trimmed = trimmed[:-1]
+    return trimmed
+
+
+def _bare_url_candidates(value: str) -> List[_Anchor]:
+    candidates: List[_Anchor] = []
+    for match in _BARE_HTTP_URL_PATTERN.finditer(value):
+        href = _trim_bare_url_candidate(match.group(0))
+        if not href:
+            continue
+
+        before = value[max(0, match.start() - _TEXT_CONTEXT_RADIUS):match.start()]
+        after = value[match.end():match.end() + _TEXT_CONTEXT_RADIUS]
+        candidates.append(_Anchor(href=href, text=f"{before} {after}"))
+    return candidates
+
+
 def _score(anchor: _Anchor) -> Optional[int]:
     parsed = urlsplit(anchor.href)
     url_evidence = _url_evidence(parsed)
@@ -219,25 +251,42 @@ def _score(anchor: _Anchor) -> Optional[int]:
     )
 
 
-def extract_verification_link(raw_html: str) -> Optional[str]:
-    if not isinstance(raw_html, str) or not raw_html:
+def extract_verification_link(
+    raw_html: str,
+    raw_text: str = "",
+) -> Optional[str]:
+    if not isinstance(raw_html, str) or not isinstance(raw_text, str):
+        return None
+    if not raw_html and not raw_text:
         return None
 
     parser = _AnchorParser()
-    try:
-        parser.feed(raw_html)
-        parser.close()
-    except (TypeError, ValueError):
-        return None
+    if raw_html:
+        try:
+            parser.feed(raw_html)
+            parser.close()
+        except (TypeError, ValueError):
+            return None
 
+    visible_html = " ".join(parser.visible_text_parts)
+    candidates = [
+        *parser.anchors,
+        *_bare_url_candidates(visible_html),
+        *_bare_url_candidates(raw_text),
+    ]
+
+    seen_hrefs = set()
     best_href: Optional[str] = None
     best_score: Optional[int] = None
-    for anchor in parser.anchors:
-        href = anchor.href.strip()
-        if not href or not _is_absolute_http_url(href):
+    for candidate in candidates:
+        href = candidate.href.strip()
+        if not href or href in seen_hrefs:
+            continue
+        seen_hrefs.add(href)
+        if not _is_absolute_http_url(href):
             continue
 
-        score = _score(_Anchor(href, anchor.text))
+        score = _score(_Anchor(href, candidate.text))
         if score is not None and (best_score is None or score > best_score):
             best_href = href
             best_score = score
