@@ -107,7 +107,7 @@ const vm = require('vm');
 const assert = require('assert');
 
 const source = fs.readFileSync(0, 'utf8');
-const safeUrl = 'https://verify.example/path?token=runtime-secret';
+const safeUrl = 'https://awstrack.me/L0/https:%2F%2FService.Example%2Fapi%2FVerify-Email%3Ftoken%3DAbC123XyZ/TrackCase';
 const innerHTMLWrites = [];
 const attributeWrites = [];
 const handlerWrites = [];
@@ -179,7 +179,7 @@ const makeElement = (tagName = 'div') => {
       attributes[normalizedName] = normalizedValue;
       attributeWrites.push({ name: normalizedName, value: normalizedValue });
       if (/^on/i.test(normalizedName)) {
-        handlerWrites.push({ name: normalizedName, value: normalizedValue });
+        handlerWrites.push({ element: this, name: normalizedName, value: normalizedValue });
       }
       if (normalizedName === 'class') this.className = normalizedValue;
       if (normalizedName === 'href') this.href = normalizedValue;
@@ -229,7 +229,7 @@ const makeElement = (tagName = 'div') => {
     get() { return onclick; },
     set(value) {
       onclick = value;
-      handlerWrites.push({ name: 'onclick', value: String(value) });
+      handlerWrites.push({ element, name: 'onclick', value: String(value) });
     },
   });
   return element;
@@ -275,6 +275,17 @@ const assertAnchor = (container, label) => {
   assert.strictEqual(anchor.target, '_blank');
   assert.strictEqual(anchor.rel, 'noopener noreferrer');
   assert.strictEqual(anchor.textContent, '打开验证链接');
+  assert.strictEqual(
+    handlerWrites.filter((write) => write.element === anchor && /^on/i.test(write.name)).length,
+    0,
+    `${label} anchor must not receive inline handlers`,
+  );
+  for (const propertyName of Object.getOwnPropertyNames(anchor).filter((name) => /^on/i.test(name))) {
+    assert.ok(
+      anchor[propertyName] == null || anchor[propertyName] === '',
+      `${label} anchor ${propertyName} must be empty`,
+    );
+  }
   return anchor;
 };
 
