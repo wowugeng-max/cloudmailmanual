@@ -109,9 +109,18 @@ const assert = require('assert');
 const source = fs.readFileSync(0, 'utf8');
 const safeUrl = 'https://awstrack.me/L0/https:%2F%2FService.Example%2Fapi%2FVerify-Email%3Ftoken%3DAbC123XyZ/TrackCase';
 const secretMarker = 'AbC123XyZ';
+const maliciousFields = {
+  code: '<img src=x onerror=globalThis.__codeXss=1>',
+  sender: '<svg onload=globalThis.__senderXss=1>',
+  subject: '<img src=x onerror=globalThis.__subjectXss=1>',
+  received_time: '<details open ontoggle=globalThis.__timeXss=1>',
+};
 const innerHTMLWrites = [];
 const attributeWrites = [];
 const handlerWrites = [];
+const hrefWrites = [];
+const allElements = [];
+const elementById = new Map();
 
 const matchesSelector = (element, selector) => {
   if (selector.startsWith('.')) {
@@ -133,6 +142,7 @@ const findDescendants = (element, selector) => {
 const makeElement = (tagName = 'div') => {
   let innerHTML = '';
   let onclick = null;
+  let href = '';
   const attributes = {};
   const closestElements = {};
   const element = {
@@ -140,7 +150,6 @@ const makeElement = (tagName = 'div') => {
     nodeName: String(tagName).toUpperCase(),
     className: '',
     textContent: '',
-    href: '',
     target: '',
     rel: '',
     title: '',
@@ -226,6 +235,13 @@ const makeElement = (tagName = 'div') => {
       }
     },
   });
+  Object.defineProperty(element, 'href', {
+    get() { return href; },
+    set(value) {
+      href = String(value);
+      hrefWrites.push({ element, value: href });
+    },
+  });
   Object.defineProperty(element, 'onclick', {
     get() { return onclick; },
     set(value) {
@@ -233,13 +249,14 @@ const makeElement = (tagName = 'div') => {
       handlerWrites.push({ element, name: 'onclick', value: String(value) });
     },
   });
+  allElements.push(element);
   return element;
 };
 
 const document = {
   documentElement: { dataset: {} },
   body: makeElement('body'),
-  getElementById() { return null; },
+  getElementById(id) { return elementById.get(String(id)) || null; },
   querySelector() { return null; },
   querySelectorAll() { return []; },
   createElement(tagName) { return makeElement(tagName); },
@@ -258,6 +275,7 @@ const context = vm.createContext({
 });
 vm.runInContext(source, context);
 
+context.__realLoadQueryHistory = vm.runInContext('loadQueryHistory', context);
 context.__onHistoryLoad = () => {};
 context.__onUsageUpdate = () => {};
 vm.runInContext(`
@@ -290,11 +308,19 @@ const assertAnchor = (container, label) => {
   return anchor;
 };
 
-const installFetch = (payload) => {
+const assertNoAnchor = (container, label) => {
+  assert.strictEqual(container.children.length, 0, `${label} should not contain a link`);
+};
+
+const installFetch = (payload, ok = true) => {
   context.fetch = async () => ({
-    ok: true,
+    ok,
     json: async () => payload,
   });
+};
+
+const installFetchError = (message) => {
+  context.fetch = async () => { throw new Error(message); };
 };
 
 const makeTopSurface = () => {
@@ -309,11 +335,9 @@ const makeTopSurface = () => {
   };
 };
 
-const runTopQuery = async (payload, label) => {
-  const surface = makeTopSurface();
-  let historyLoads = 0;
-  context.__onHistoryLoad = () => { historyLoads += 1; };
-  installFetch(payload);
+const runTopQuery = async (surface, payload) => {
+  if (payload instanceof Error) installFetchError(payload.message);
+  else installFetch(payload);
   context.__topStatus = surface.status;
   context.__topButton = surface.button;
   context.__topTable = surface.table;
@@ -322,10 +346,24 @@ const runTopQuery = async (payload, label) => {
       "__topStatus, __topButton, __topTable, false)",
     context,
   );
-  const linkCell = surface.tbody.querySelector('.verification-link-cell');
-  assert.ok(linkCell, `${label} should create verification-link-cell`);
-  assertAnchor(linkCell, label);
-  return { surface, historyLoads };
+};
+
+const assertTopRow = (surface, expectedValues, label) => {
+  assert.strictEqual(surface.tbody.children.length, 1, `${label} should render one row`);
+  const row = surface.tbody.children[0];
+  assert.strictEqual(row.children.length, 5, `${label} should preserve the five columns`);
+  expectedValues.forEach((expected, index) => {
+    const cell = row.children[index];
+    assert.strictEqual(cell.tagName, 'TD');
+    assert.strictEqual(cell.textContent, expected, `${label} column ${index} text mismatch`);
+    assert.strictEqual(cell.dataset.copy, expected, `${label} column ${index} copy data mismatch`);
+    assert.strictEqual(cell.children.length, 0, `${label} column ${index} must contain text only`);
+  });
+  assert.ok(
+    String(row.children[4].className).split(/\s+/).includes('verification-link-cell'),
+    `${label} should preserve the link column`,
+  );
+  return row;
 };
 
 const makeQuickSurface = () => {
@@ -347,23 +385,35 @@ const makeQuickSurface = () => {
   return { row, stack, codeResult, linkResult, button };
 };
 
-const runQuickQuery = async (payload, expectedUsed, expectedHistoryLoads, label) => {
-  const surface = makeQuickSurface();
-  let historyLoads = 0;
-  const usageUpdates = [];
-  context.__onHistoryLoad = () => { historyLoads += 1; };
-  context.__onUsageUpdate = (row, email, used) => {
-    usageUpdates.push({ row, email, used });
-  };
-  installFetch(payload);
+const runQuickQuery = async (surface, payload) => {
+  if (payload instanceof Error) installFetchError(payload.message);
+  else installFetch(payload);
   context.__quickButton = surface.button;
   await vm.runInContext('quickQueryCode(__quickButton)', context);
-  assertAnchor(surface.linkResult, label);
-  assert.strictEqual(usageUpdates.length, 1, `${label} should update usage once`);
-  assert.strictEqual(usageUpdates[0].row, surface.row);
-  assert.strictEqual(usageUpdates[0].email, 'row@example.com');
-  assert.strictEqual(usageUpdates[0].used, expectedUsed);
-  assert.strictEqual(historyLoads, expectedHistoryLoads);
+};
+
+const makeQueryHistorySurface = () => {
+  const table = makeElement('table');
+  const tbody = makeElement('tbody');
+  table.appendChild(tbody);
+  const elements = {
+    queryHistoryPageSize: makeElement('input'),
+    queryHistoryStatus: makeElement('div'),
+    queryHistoryTable: table,
+    queryHistoryEmailFilter: makeElement('input'),
+    prevQueryHistoryBtn: makeElement('button'),
+    nextQueryHistoryBtn: makeElement('button'),
+  };
+  elements.queryHistoryPageSize.value = '20';
+  elements.queryHistoryEmailFilter.value = '';
+  Object.entries(elements).forEach(([id, element]) => elementById.set(id, element));
+  return { table, tbody, elements };
+};
+
+const runQueryHistory = async (surface, payload) => {
+  installFetch(payload);
+  context.__queryHistorySurface = surface;
+  await vm.runInContext('__realLoadQueryHistory(1)', context);
 };
 
 (async () => {
@@ -377,47 +427,217 @@ const runQuickQuery = async (payload, expectedUsed, expectedHistoryLoads, label)
   assert.strictEqual(helperResult, true);
   assertAnchor(helperContainer, 'helper');
 
-  const unsafeContainer = makeElement('div');
-  context.__unsafeContainer = unsafeContainer;
-  const unsafeResult = vm.runInContext(
-    "appendVerificationLinkAction(__unsafeContainer, 'javascript:alert(1)')",
-    context,
-  );
-  assert.strictEqual(unsafeResult, false);
-  assert.strictEqual(unsafeContainer.children.length, 0);
+  for (const [label, invalidUrl] of [
+    ['empty', ''],
+    ['leading whitespace', ` ${safeUrl}`],
+    ['trailing whitespace', `${safeUrl}\n`],
+    ['embedded whitespace', 'https://example.com/verify token'],
+    ['unsafe scheme', 'javascript:alert(1)'],
+    ['missing hostname', 'https://'],
+  ]) {
+    const invalidContainer = makeElement('div');
+    context.__invalidContainer = invalidContainer;
+    context.__invalidUrl = invalidUrl;
+    const invalidResult = vm.runInContext(
+      'appendVerificationLinkAction(__invalidContainer, __invalidUrl)',
+      context,
+    );
+    assert.strictEqual(invalidResult, false, `${label} URL must be rejected`);
+    assertNoAnchor(invalidContainer, label);
+  }
 
-  const topLinkOnly = await runTopQuery({
+  let historyLoads = 0;
+  context.__onHistoryLoad = () => { historyLoads += 1; };
+  const topSurface = makeTopSurface();
+  await runTopQuery(topSurface, {
     ok: true,
     code: '',
     verification_url: safeUrl,
     sender: 'sender@example.com',
     subject: 'Verify account',
     received_time: '2026-07-29 10:00:00',
-  }, 'top link-only');
-  assert.ok(topLinkOnly.surface.status.textContent.includes('已找到验证链接'));
-  assert.strictEqual(topLinkOnly.historyLoads, 0);
+  });
+  let topRow = assertTopRow(
+    topSurface,
+    ['', 'sender@example.com', 'Verify account', '2026-07-29 10:00:00'],
+    'top link-only',
+  );
+  assertAnchor(topRow.children[4], 'top link-only');
+  assert.strictEqual(topSurface.table.style.display, 'table');
+  assert.ok(topSurface.status.textContent.includes('已找到验证链接'));
+  assert.strictEqual(historyLoads, 0);
 
-  const topCodeAndLink = await runTopQuery({
+  await runTopQuery(topSurface, {
+    ok: true,
+    code: '',
+    verification_url: '',
+    sender: '',
+    subject: '',
+    received_time: '',
+  });
+  assert.strictEqual(topSurface.tbody.children.length, 0, 'top empty must clear the old row');
+  assert.strictEqual(topSurface.table.style.display, 'none');
+  assert.ok(topSurface.status.textContent.includes('暂未查询到'));
+  assert.ok(!topSurface.status.textContent.includes('已找到验证链接'));
+
+  await runTopQuery(topSurface, {
+    ok: true,
+    code: '',
+    verification_url: ` ${safeUrl}`,
+  });
+  assert.strictEqual(topSurface.tbody.children.length, 0, 'top invalid URL must not render a row');
+  assert.strictEqual(topSurface.table.style.display, 'none');
+  assert.ok(topSurface.status.textContent.includes('暂未查询到'));
+
+  await runTopQuery(topSurface, {
+    ok: true,
+    code: '',
+    verification_url: safeUrl,
+  });
+  assertAnchor(topSurface.tbody.children[0].children[4], 'top before error');
+  await runTopQuery(topSurface, new Error('top network failure'));
+  assert.strictEqual(topSurface.tbody.children.length, 0, 'top error must clear the old row');
+  assert.strictEqual(topSurface.table.style.display, 'none');
+  assert.ok(topSurface.status.textContent.includes('top network failure'));
+
+  const topCodeAndLink = makeTopSurface();
+  await runTopQuery(topCodeAndLink, {
     ok: true,
     code: '123456',
     verification_url: safeUrl,
     sender: 'sender@example.com',
     subject: 'Verify account',
     received_time: '2026-07-29 10:00:00',
-  }, 'top code+link');
-  assert.strictEqual(topCodeAndLink.historyLoads, 1);
+  });
+  topRow = assertTopRow(
+    topCodeAndLink,
+    ['123456', 'sender@example.com', 'Verify account', '2026-07-29 10:00:00'],
+    'top code+link',
+  );
+  assertAnchor(topRow.children[4], 'top code+link');
+  assert.strictEqual(historyLoads, 1);
 
-  await runQuickQuery({
+  const topCodeInvalidLink = makeTopSurface();
+  await runTopQuery(topCodeInvalidLink, {
+    ok: true,
+    code: '246810',
+    verification_url: `${safeUrl} `,
+    sender: 'sender@example.com',
+    subject: 'Code only',
+    received_time: '2026-07-29 11:00:00',
+  });
+  topRow = assertTopRow(
+    topCodeInvalidLink,
+    ['246810', 'sender@example.com', 'Code only', '2026-07-29 11:00:00'],
+    'top code + invalid link',
+  );
+  assertNoAnchor(topRow.children[4], 'top code + invalid link');
+  assert.ok(topCodeInvalidLink.status.textContent.includes('已查询到验证码'));
+
+  const maliciousTop = makeTopSurface();
+  await runTopQuery(maliciousTop, {
+    ok: true,
+    verification_url: safeUrl,
+    ...maliciousFields,
+  });
+  topRow = assertTopRow(
+    maliciousTop,
+    [maliciousFields.code, maliciousFields.sender, maliciousFields.subject, maliciousFields.received_time],
+    'top malicious fields',
+  );
+  assertAnchor(topRow.children[4], 'top malicious fields');
+
+  let quickHistoryLoads = 0;
+  const usageUpdates = [];
+  context.__onHistoryLoad = () => { quickHistoryLoads += 1; };
+  context.__onUsageUpdate = (row, email, used) => {
+    usageUpdates.push({ row, email, used });
+  };
+  const quickSurface = makeQuickSurface();
+  await runQuickQuery(quickSurface, {
     ok: true,
     code: '',
     verification_url: safeUrl,
-  }, false, 0, 'quick link-only');
+  });
+  assertAnchor(quickSurface.linkResult, 'quick link-only');
+  assert.strictEqual(quickSurface.codeResult.textContent, '仅发现验证链接');
+  assert.strictEqual(usageUpdates.at(-1).used, false);
 
-  await runQuickQuery({
+  await runQuickQuery(quickSurface, {
+    ok: true,
+    code: '',
+    verification_url: '',
+  });
+  assertNoAnchor(quickSurface.linkResult, 'quick empty');
+  assert.strictEqual(quickSurface.codeResult.textContent, '暂未查到');
+
+  await runQuickQuery(quickSurface, {
+    ok: true,
+    code: '',
+    verification_url: ` ${safeUrl}`,
+  });
+  assertNoAnchor(quickSurface.linkResult, 'quick invalid URL');
+  assert.strictEqual(quickSurface.codeResult.textContent, '暂未查到');
+
+  await runQuickQuery(quickSurface, {
+    ok: true,
+    code: '',
+    verification_url: safeUrl,
+  });
+  assertAnchor(quickSurface.linkResult, 'quick before error');
+  await runQuickQuery(quickSurface, new Error('quick network failure'));
+  assertNoAnchor(quickSurface.linkResult, 'quick error');
+  assert.strictEqual(quickSurface.codeResult.textContent, 'quick network failure');
+
+  const quickCodeAndLink = makeQuickSurface();
+  await runQuickQuery(quickCodeAndLink, {
     ok: true,
     code: '654321',
     verification_url: safeUrl,
-  }, true, 1, 'quick code+link');
+  });
+  assertAnchor(quickCodeAndLink.linkResult, 'quick code+link');
+  assert.strictEqual(quickCodeAndLink.codeResult.textContent, '654321');
+  assert.strictEqual(usageUpdates.at(-1).used, true);
+  assert.strictEqual(quickHistoryLoads, 1);
+
+  const queryHistory = makeQueryHistorySurface();
+  await runQueryHistory(queryHistory, {
+    ok: true,
+    page: 1,
+    total_pages: 1,
+    total: 1,
+    items: [{
+      id: maliciousFields.code,
+      email: maliciousFields.sender,
+      code: maliciousFields.code,
+      sender: maliciousFields.sender,
+      subject: maliciousFields.subject,
+      received_time: maliciousFields.received_time,
+      queried_at: maliciousFields.subject,
+    }],
+  });
+  assert.strictEqual(queryHistory.tbody.children.length, 1);
+  const historyRow = queryHistory.tbody.children[0];
+  assert.strictEqual(historyRow.children.length, 8, 'query history must preserve column order');
+  const checkbox = historyRow.children[0].children[0];
+  assert.strictEqual(checkbox.tagName, 'INPUT');
+  assert.strictEqual(checkbox.type, 'checkbox');
+  assert.strictEqual(checkbox.className, 'query-history-check');
+  assert.strictEqual(checkbox.value, maliciousFields.code);
+  [
+    maliciousFields.code,
+    maliciousFields.sender,
+    maliciousFields.code,
+    maliciousFields.sender,
+    maliciousFields.subject,
+    maliciousFields.received_time,
+    maliciousFields.subject,
+  ].forEach((expected, index) => {
+    const cell = historyRow.children[index + 1];
+    assert.strictEqual(cell.textContent, expected, `query history column ${index} text mismatch`);
+    assert.strictEqual(cell.dataset.copy, expected, `query history column ${index} copy data mismatch`);
+    assert.strictEqual(cell.children.length, 0, `query history column ${index} must contain text only`);
+  });
 
   for (const write of innerHTMLWrites) {
     assert.ok(!write.value.includes(safeUrl), 'safe URL leaked into innerHTML');
@@ -425,6 +645,9 @@ const runQuickQuery = async (payload, expectedUsed, expectedHistoryLoads, label)
       !String(write.value).toLowerCase().includes(secretMarker.toLowerCase()),
       'decoded verification token leaked into innerHTML',
     );
+    for (const payload of Object.values(maliciousFields)) {
+      assert.ok(!write.value.includes(payload), 'XSS payload leaked into innerHTML');
+    }
   }
   for (const write of attributeWrites) {
     assert.ok(!write.value.includes(safeUrl), 'safe URL leaked through setAttribute');
@@ -432,6 +655,9 @@ const runQuickQuery = async (payload, expectedUsed, expectedHistoryLoads, label)
       !String(write.value).toLowerCase().includes(secretMarker.toLowerCase()),
       'decoded verification token leaked through setAttribute',
     );
+    for (const payload of Object.values(maliciousFields)) {
+      assert.ok(!write.value.includes(payload), 'XSS payload leaked through setAttribute');
+    }
   }
   for (const write of handlerWrites) {
     assert.ok(!write.value.includes(safeUrl), 'safe URL leaked into inline handler');
@@ -439,6 +665,22 @@ const runQuickQuery = async (payload, expectedUsed, expectedHistoryLoads, label)
       !String(write.value).toLowerCase().includes(secretMarker.toLowerCase()),
       'decoded verification token leaked into inline handler',
     );
+    for (const payload of Object.values(maliciousFields)) {
+      assert.ok(!write.value.includes(payload), 'XSS payload leaked into handler');
+    }
+  }
+  assert.ok(hrefWrites.length > 0, 'safe links should be assigned through href properties');
+  for (const write of hrefWrites) {
+    assert.strictEqual(write.element.tagName, 'A', 'only anchors may receive href values');
+    assert.strictEqual(write.value, safeUrl, 'href must preserve the original safe URL');
+  }
+  for (const element of allElements) {
+    assert.ok(!String(element.textContent).includes(safeUrl), 'verification URL became visible text');
+    assert.ok(
+      !String(element.textContent).toLowerCase().includes(secretMarker.toLowerCase()),
+      'verification token became visible text',
+    );
+    assert.ok(!['IMG', 'SVG', 'DETAILS'].includes(element.tagName), 'XSS payload created an element');
   }
 })().catch((error) => {
   console.error(error);

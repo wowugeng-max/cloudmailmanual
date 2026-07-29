@@ -952,11 +952,20 @@ async function startRegister() {
   }
 }
 
+function appendCopyTextCell(row, value) {
+  const text = value == null ? '' : String(value);
+  const cell = document.createElement('td');
+  cell.textContent = text;
+  cell.dataset.copy = text;
+  row.appendChild(cell);
+  return cell;
+}
+
 function appendVerificationLinkAction(container, rawUrl) {
   if (!container) return false;
 
-  const verificationUrl = String(rawUrl || '').trim();
-  if (!verificationUrl) return false;
+  const verificationUrl = rawUrl == null ? '' : String(rawUrl);
+  if (!verificationUrl || /\s/.test(verificationUrl)) return false;
 
   try {
     const parsedUrl = new URL(verificationUrl);
@@ -981,7 +990,7 @@ async function queryCodeCommon(email, platform, profileId, statusEl, btnEl, tabl
   const table = tableEl;
   const tbody = table.querySelector('tbody');
 
-  tbody.innerHTML = '';
+  tbody.replaceChildren();
   table.style.display = 'none';
 
   if (!email || !email.includes('@')) {
@@ -1007,19 +1016,18 @@ async function queryCodeCommon(email, platform, profileId, statusEl, btnEl, tabl
     }
 
     const hasCode = !!data.code;
-    const hasVerificationLink = !!data.verification_url;
+    const tr = document.createElement('tr');
+    appendCopyTextCell(tr, data.code);
+    appendCopyTextCell(tr, data.sender);
+    appendCopyTextCell(tr, data.subject);
+    appendCopyTextCell(tr, data.received_time);
+    const linkCell = document.createElement('td');
+    linkCell.className = 'verification-link-cell';
+    tr.appendChild(linkCell);
+    const hasVerificationLink = appendVerificationLinkAction(linkCell, data.verification_url);
 
     if (hasCode || hasVerificationLink) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td data-copy="${data.code || ''}">${data.code || ''}</td>
-        <td data-copy="${data.sender || ''}">${data.sender || ''}</td>
-        <td data-copy="${data.subject || ''}">${data.subject || ''}</td>
-        <td data-copy="${data.received_time || ''}">${data.received_time || ''}</td>
-        <td class="verification-link-cell"></td>
-      `;
       tbody.appendChild(tr);
-      appendVerificationLinkAction(tr.querySelector('.verification-link-cell'), data.verification_url);
       table.style.display = 'table';
       bindCopyHandlers();
     }
@@ -1344,7 +1352,7 @@ async function quickQueryCode(button) {
     }
 
     const hasCode = !!data.code;
-    const hasVerificationLink = !!data.verification_url;
+    const hasVerificationLink = appendVerificationLinkAction(linkResult, data.verification_url);
 
     if (hasCode) {
       result.className = 'history-code-result ok';
@@ -1356,9 +1364,6 @@ async function quickQueryCode(button) {
     } else {
       result.textContent = hasVerificationLink ? '仅发现验证链接' : '暂未查到';
       updateHistoryRowUsage(row, email, false);
-    }
-    if (hasVerificationLink) {
-      appendVerificationLinkAction(linkResult, data.verification_url);
     }
   } catch (e) {
     result.className = 'history-code-result err';
@@ -1532,19 +1537,23 @@ async function loadQueryHistory(page) {
     queryHistoryPage = data.page;
     queryHistoryTotalPages = data.total_pages || 1;
 
-    tbody.innerHTML = '';
+    tbody.replaceChildren();
     (data.items || []).forEach((r) => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><input type="checkbox" class="query-history-check" value="${r.id || ''}" /></td>
-        <td data-copy="${r.id || ''}">${r.id || ''}</td>
-        <td data-copy="${r.email || ''}">${r.email || ''}</td>
-        <td data-copy="${r.code || ''}">${r.code || ''}</td>
-        <td data-copy="${r.sender || ''}">${r.sender || ''}</td>
-        <td data-copy="${r.subject || ''}">${r.subject || ''}</td>
-        <td data-copy="${r.received_time || ''}">${r.received_time || ''}</td>
-        <td data-copy="${r.queried_at || ''}">${r.queried_at || ''}</td>
-      `;
+      const selectCell = document.createElement('td');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'query-history-check';
+      checkbox.value = r.id == null ? '' : String(r.id);
+      selectCell.appendChild(checkbox);
+      tr.appendChild(selectCell);
+      appendCopyTextCell(tr, r.id);
+      appendCopyTextCell(tr, r.email);
+      appendCopyTextCell(tr, r.code);
+      appendCopyTextCell(tr, r.sender);
+      appendCopyTextCell(tr, r.subject);
+      appendCopyTextCell(tr, r.received_time);
+      appendCopyTextCell(tr, r.queried_at);
       tbody.appendChild(tr);
     });
 
