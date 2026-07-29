@@ -276,6 +276,109 @@ class VerificationRulesApiTest(unittest.TestCase):
         self.assertEqual(response.get_json()["ok"], False)
         self.assertIn("自定义验证码规则匹配超时: Slow", response.get_json()["error"])
 
+    def test_query_code_includes_empty_verification_url_when_no_message(self):
+        self.login()
+
+        with (
+            patch.object(routes, "CloudMailClient") as client_class,
+            patch.object(routes, "mark_account_used") as mark_used,
+        ):
+            client_class.return_value.query_verification_detail.return_value = None
+            response = self.client.post(
+                "/api/query-code", json={"email": "a@example.com"}
+            )
+
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["verification_url"], "")
+        self.assertFalse(data["saved"])
+        self.assertFalse(data["auto_marked_used"])
+        mark_used.assert_called_once_with(
+            "a@example.com", used=False, platform=""
+        )
+
+    def test_link_only_query_returns_url_without_history_or_used_side_effect(self):
+        href = "https://awstrack.me/L0/https:%2F%2Fservice.test%2Fverify?token=redacted"
+        self.login()
+
+        with (
+            patch.object(routes, "CloudMailClient") as client_class,
+            patch.object(routes, "save_verification_query") as save_query,
+            patch.object(routes, "mark_account_used") as mark_used,
+        ):
+            client_class.return_value.query_verification_detail.return_value = {
+                "code": "",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Verify",
+                "received_time": "2026-07-29 10:00:00",
+            }
+            response = self.client.post(
+                "/api/query-code", json={"email": "a@example.com"}
+            )
+
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["verification_url"], href)
+        self.assertFalse(data["saved"])
+        self.assertFalse(data["auto_marked_used"])
+        save_query.assert_not_called()
+        mark_used.assert_called_once_with(
+            "a@example.com", used=False, platform=""
+        )
+
+    def test_code_plus_link_is_saved_without_persisting_url_and_marks_used(self):
+        href = "https://example.test/confirm?token=redacted"
+        self.login()
+
+        with (
+            patch.object(routes, "CloudMailClient") as client_class,
+            patch.object(routes, "save_verification_query") as save_query,
+            patch.object(routes, "mark_account_used") as mark_used,
+        ):
+            client_class.return_value.query_verification_detail.return_value = {
+                "code": "123456",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Confirm",
+                "received_time": "2026-07-29 10:00:00",
+            }
+            response = self.client.post(
+                "/api/query-code",
+                json={"email": "a@example.com", "platform": "Test"},
+            )
+
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["code"], "123456")
+        self.assertEqual(data["verification_url"], href)
+        self.assertTrue(data["saved"])
+        self.assertTrue(data["auto_marked_used"])
+        save_query.assert_called_once_with(
+            "a@example.com",
+            {
+                "code": "123456",
+                "sender": "sender@example.test",
+                "subject": "Confirm",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+        self.assertNotIn("verification_url", save_query.call_args.args[1])
+        mark_used.assert_called_once_with(
+            "a@example.com", used=True, platform="Test"
+        )
+
+    def test_query_code_requires_login(self):
+        response = self.client.post(
+            "/api/query-code", json={"email": "a@example.com"}
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(response.get_json()["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()
