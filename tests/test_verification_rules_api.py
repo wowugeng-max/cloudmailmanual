@@ -326,6 +326,108 @@ class VerificationRulesApiTest(unittest.TestCase):
         self.assertEqual(data["code"], "")
         self.assertEqual(data["verification_url"], href)
         self.assertEqual(data["subject"], "")
+        self.assertEqual(data["mark_platform"], "sender@example.test")
+        self.assertFalse(data["saved"])
+        self.assertFalse(data["auto_marked_used"])
+        save_query.assert_not_called()
+        mark_used.assert_called_once_with(
+            "a@example.com", used=False, platform="sender@example.test"
+        )
+
+    def test_link_only_explicit_platform_overrides_sender(self):
+        self.login()
+
+        with (
+            patch.object(routes, "CloudMailClient") as client_class,
+            patch.object(routes, "save_verification_query") as save_query,
+            patch.object(routes, "mark_account_used") as mark_used,
+        ):
+            client_class.return_value.query_verification_detail.return_value = {
+                "code": "",
+                "verification_url": "https://example.test/verify?token=redacted",
+                "sender": "sender@example.test",
+                "subject": "Verify",
+                "received_time": "2026-07-29 10:00:00",
+            }
+            response = self.client.post(
+                "/api/query-code",
+                json={"email": "a@example.com", "platform": "Manual Platform"},
+            )
+
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["mark_platform"], "Manual Platform")
+        self.assertFalse(data["saved"])
+        self.assertFalse(data["auto_marked_used"])
+        save_query.assert_not_called()
+        mark_used.assert_called_once_with(
+            "a@example.com", used=False, platform="Manual Platform"
+        )
+
+    def test_link_only_missing_platform_uses_sanitized_sender_or_fallback(self):
+        href = "https://metadata.example.test/sender?token=SENDER123"
+        cases = (
+            (f"Mail service {href}", "Mail service"),
+            (href, "验证码查询"),
+        )
+        self.login()
+
+        for sender, expected_platform in cases:
+            with self.subTest(sender=sender):
+                with (
+                    patch.object(routes, "CloudMailClient") as client_class,
+                    patch.object(routes, "save_verification_query") as save_query,
+                    patch.object(routes, "mark_account_used") as mark_used,
+                ):
+                    client_class.return_value.query_verification_detail.return_value = {
+                        "code": "",
+                        "verification_url": "https://example.test/verify?token=redacted",
+                        "sender": sender,
+                        "subject": "Verify",
+                        "received_time": "2026-07-29 10:00:00",
+                    }
+                    response = self.client.post(
+                        "/api/query-code",
+                        json={"email": "a@example.com"},
+                    )
+
+                data = response.get_json()
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(data["sender"], sender)
+                self.assertEqual(data["mark_platform"], expected_platform)
+                self.assertFalse(data["saved"])
+                self.assertFalse(data["auto_marked_used"])
+                save_query.assert_not_called()
+                mark_used.assert_called_once_with(
+                    "a@example.com",
+                    used=False,
+                    platform=expected_platform,
+                )
+                self.assertNotIn("http", repr(mark_used.call_args))
+                self.assertNotIn("token=", repr(mark_used.call_args))
+
+    def test_detail_without_code_or_link_keeps_platform_empty(self):
+        self.login()
+
+        with (
+            patch.object(routes, "CloudMailClient") as client_class,
+            patch.object(routes, "save_verification_query") as save_query,
+            patch.object(routes, "mark_account_used") as mark_used,
+        ):
+            client_class.return_value.query_verification_detail.return_value = {
+                "code": "",
+                "verification_url": "",
+                "sender": "sender@example.test",
+                "subject": "No verification data",
+                "received_time": "2026-07-29 10:00:00",
+            }
+            response = self.client.post(
+                "/api/query-code", json={"email": "a@example.com"}
+            )
+
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["mark_platform"], "")
         self.assertFalse(data["saved"])
         self.assertFalse(data["auto_marked_used"])
         save_query.assert_not_called()
