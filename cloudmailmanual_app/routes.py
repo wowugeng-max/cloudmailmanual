@@ -308,11 +308,11 @@ def register_routes(app):
                 })
     
             normalized_detail = {
-                "code": str(detail.get("code", "")),
-                "verification_url": str(detail.get("verification_url", "")),
-                "sender": str(detail.get("sender", "")),
-                "subject": str(detail.get("subject", "")),
-                "received_time": str(detail.get("received_time", "")),
+                "code": str(detail.get("code") or ""),
+                "verification_url": str(detail.get("verification_url") or ""),
+                "sender": str(detail.get("sender") or ""),
+                "subject": str(detail.get("subject") or ""),
+                "received_time": str(detail.get("received_time") or ""),
             }
             if not normalized_detail["code"]:
                 mark_account_used(email, used=False, platform="")
