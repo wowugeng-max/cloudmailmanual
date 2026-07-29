@@ -1314,7 +1314,9 @@ function updateHistoryRowUsage(row, email, used, platform = '') {
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean);
-    if (!platforms.includes(normalizedPlatform)) {
+    const normalizedExistingPlatforms = platforms.join(', ');
+    const hasPlatform = `, ${normalizedExistingPlatforms}, `.includes(`, ${normalizedPlatform}, `);
+    if (!hasPlatform) {
       platforms.push(normalizedPlatform);
     }
     const platformText = platforms.join(', ');

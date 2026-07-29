@@ -60,7 +60,11 @@ def mark_account_used(email: str, used: bool = True, platform: str = "") -> bool
 
         if platform:
             p = platform.strip()
-            if p and p not in platform_list:
+            normalized_existing_platforms = ", ".join(platform_list)
+            has_platform = (
+                f", {p}, " in f", {normalized_existing_platforms}, "
+            )
+            if p and not has_platform:
                 platform_list.append(p)
 
         used_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if used else None

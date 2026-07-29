@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +9,7 @@ import auth
 
 from cloudmailmanual_app import database, routes
 from cloudmailmanual_app.factory import create_app
-from cloudmailmanual_app.repositories import verification_rules
+from cloudmailmanual_app.repositories import accounts, verification, verification_rules
 
 
 class VerificationRulesApiTest(unittest.TestCase):
@@ -364,6 +365,36 @@ class VerificationRulesApiTest(unittest.TestCase):
             "a@example.com", used=False, platform="Manual Platform"
         )
 
+    def test_link_only_null_platform_uses_sender(self):
+        self.login()
+
+        with (
+            patch.object(routes, "CloudMailClient") as client_class,
+            patch.object(routes, "save_verification_query") as save_query,
+            patch.object(routes, "mark_account_used") as mark_used,
+        ):
+            client_class.return_value.query_verification_detail.return_value = {
+                "code": "",
+                "verification_url": "https://example.test/verify?token=redacted",
+                "sender": "sender@example.test",
+                "subject": "Verify",
+                "received_time": "2026-07-29 10:00:00",
+            }
+            response = self.client.post(
+                "/api/query-code",
+                json={"email": "a@example.com", "platform": None},
+            )
+
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["mark_platform"], "sender@example.test")
+        self.assertFalse(data["saved"])
+        self.assertFalse(data["auto_marked_used"])
+        save_query.assert_not_called()
+        mark_used.assert_called_once_with(
+            "a@example.com", used=False, platform="sender@example.test"
+        )
+
     def test_link_only_missing_platform_uses_sanitized_sender_or_fallback(self):
         href = "https://metadata.example.test/sender?token=SENDER123"
         cases = (
@@ -434,6 +465,69 @@ class VerificationRulesApiTest(unittest.TestCase):
         mark_used.assert_called_once_with(
             "a@example.com", used=False, platform=""
         )
+
+    def test_repeated_link_only_query_persists_comma_platform_once(self):
+        email = "a@example.com"
+        sender = "Acme, Inc."
+        self.login()
+
+        with sqlite3.connect(self.database_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO accounts (
+                    email, password, app_password, profile_id, name, age,
+                    birthday, created_at, used, used_at, platforms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, '')
+                """,
+                (
+                    email,
+                    "mail-password",
+                    "app-password",
+                    "profile-1",
+                    "Test User",
+                    30,
+                    "1996-01-01",
+                    "2026-07-29 09:00:00",
+                ),
+            )
+            conn.commit()
+
+        with (
+            patch.object(accounts, "DB_PATH", self.database_path),
+            patch.object(verification, "DB_PATH", self.database_path),
+            patch.object(routes, "CloudMailClient") as client_class,
+        ):
+            client_class.return_value.query_verification_detail.return_value = {
+                "code": "",
+                "verification_url": "https://example.test/verify?token=redacted",
+                "sender": sender,
+                "subject": "Verify",
+                "received_time": "2026-07-29 10:00:00",
+            }
+            responses = [
+                self.client.post("/api/query-code", json={"email": email})
+                for _ in range(2)
+            ]
+
+        for response in responses:
+            data = response.get_json()
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(data["mark_platform"], sender)
+            self.assertFalse(data["saved"])
+            self.assertFalse(data["auto_marked_used"])
+
+        with sqlite3.connect(self.database_path) as conn:
+            account_row = conn.execute(
+                "SELECT used, used_at, platforms FROM accounts WHERE email=?",
+                (email,),
+            ).fetchone()
+            history_count = conn.execute(
+                "SELECT COUNT(1) FROM verification_queries WHERE email=?",
+                (email,),
+            ).fetchone()[0]
+
+        self.assertEqual(account_row, (0, None, sender))
+        self.assertEqual(history_count, 0)
 
     def test_code_plus_link_is_saved_without_persisting_url_and_marks_used(self):
         href = "https://example.test/confirm?token=redacted"

@@ -286,7 +286,7 @@ def register_routes(app):
         if not email or "@" not in email:
             return jsonify({"ok": False, "error": "请输入有效邮箱"}), 400
     
-        platform = str(payload.get("platform", "")).strip()
+        platform = str(payload.get("platform") or "").strip()
         profile_id = str(payload.get("profile_id", "") or "").strip()
 
         try:

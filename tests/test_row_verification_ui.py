@@ -592,7 +592,7 @@ const runQueryHistory = async (surface, payload) => {
     ok: true,
     code: '',
     verification_url: safeUrl,
-    mark_platform: 'sender@example.com',
+    mark_platform: 'Acme, Inc.',
   });
   assertAnchor(quickSurface.linkResult, 'quick link-only');
   assert.strictEqual(quickSurface.codeResult.textContent, '仅发现验证链接');
@@ -600,23 +600,23 @@ const runQueryHistory = async (surface, payload) => {
   assert.strictEqual(quickSurface.actionButton.dataset.used, '0');
   assert.strictEqual(
     quickSurface.platformCell.textContent,
-    'Existing Platform, sender@example.com',
+    'Existing Platform, Acme, Inc.',
   );
   assert.strictEqual(
     quickSurface.platformCell.dataset.copy,
-    'Existing Platform, sender@example.com',
+    'Existing Platform, Acme, Inc.',
   );
 
   await runQuickQuery(quickSurface, {
     ok: true,
     code: '',
     verification_url: safeUrl,
-    mark_platform: 'sender@example.com',
+    mark_platform: 'Acme, Inc.',
   });
   assertAnchor(quickSurface.linkResult, 'quick duplicate platform');
   assert.strictEqual(
     quickSurface.platformCell.textContent,
-    'Existing Platform, sender@example.com',
+    'Existing Platform, Acme, Inc.',
   );
 
   await runQuickQuery(quickSurface, {
