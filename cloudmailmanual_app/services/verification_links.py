@@ -36,6 +36,10 @@ _OPAQUE_VALUE_KEYS = {
 _PERCENT_ESCAPE_PATTERN = re.compile(r"%[0-9A-Fa-f]{2}")
 _ENCODED_QUERY_MARKER_PATTERN = re.compile(r"%3F", re.IGNORECASE)
 _BARE_HTTP_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_ENTITY_SCHEME_HTTP_URL_PATTERN = re.compile(
+    r"https?(?:&#0*58;|&#x0*3a;|&colon;)//[^\s<>\"']+",
+    re.IGNORECASE,
+)
 _TEXT_CONTEXT_RADIUS = 160
 _TRAILING_SENTENCE_PUNCTUATION = ".,!"
 _CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
@@ -224,10 +228,14 @@ def mask_http_urls(value: str) -> str:
         return ""
     if not value:
         return value
-    return _BARE_HTTP_URL_PATTERN.sub(
-        lambda match: " " * (match.end() - match.start()),
-        value,
-    )
+
+    masked = value
+    for pattern in (_BARE_HTTP_URL_PATTERN, _ENTITY_SCHEME_HTTP_URL_PATTERN):
+        masked = pattern.sub(
+            lambda match: " " * (match.end() - match.start()),
+            masked,
+        )
+    return masked
 
 
 def _bare_url_candidates(value: str) -> List[_Anchor]:

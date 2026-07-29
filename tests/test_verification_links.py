@@ -17,6 +17,24 @@ class VerificationLinkExtractionTest(unittest.TestCase):
         self.assertEqual(mask_http_urls(value), expected)
         self.assertEqual(len(mask_http_urls(value)), len(value))
 
+    def test_mask_http_urls_masks_entity_encoded_scheme_span(self):
+        encoded_schemes = ("https&#58;//", "https&#x3A;//", "https&colon;//")
+
+        for encoded_scheme in encoded_schemes:
+            with self.subTest(encoded_scheme=encoded_scheme):
+                encoded_href = (
+                    f"{encoded_scheme}example.test/verify?token=ABC123"
+                )
+                value = f"Keep A&amp;B before {encoded_href} after"
+                expected = (
+                    f"Keep A&amp;B before {' ' * len(encoded_href)} after"
+                )
+
+                masked = verification_links.mask_http_urls(value)
+
+                self.assertEqual(masked, expected)
+                self.assertEqual(len(masked), len(value))
+
     def test_mask_http_urls_handles_empty_and_non_string_values(self):
         mask_http_urls = getattr(verification_links, "mask_http_urls", None)
 

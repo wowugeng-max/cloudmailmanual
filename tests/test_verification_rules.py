@@ -623,6 +623,57 @@ else:
             },
         )
 
+    def test_query_detail_ignores_entity_encoded_html_url_token_as_code(self):
+        href = "https://example.test/verify?token=ABC123"
+        encoded_href = "https&#58;//example.test/verify?token=ABC123"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": f"<p>Activate using {encoded_href}</p>",
+                "sendEmail": "sender@example.test",
+                "subject": "Activate your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Activate your account",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_detail_keeps_code_outside_entity_encoded_html_url(self):
+        href = "https://example.test/verify?token=ABC123"
+        encoded_href = "https&#58;//example.test/verify?token=ABC123"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": (
+                    "<p>Your verification code is 654321. "
+                    f"Activate using {encoded_href}</p>"
+                ),
+                "sendEmail": "sender@example.test",
+                "subject": "Activate your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "654321",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Activate your account",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
     def test_query_detail_returns_plain_text_bare_link_without_html(self):
         href = "https://example.test/verify-email?token=synthetic-value"
         client = CloudMailClient.__new__(CloudMailClient)
