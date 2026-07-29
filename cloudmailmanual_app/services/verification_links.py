@@ -4,6 +4,7 @@ import re
 from bisect import bisect_right
 from dataclasses import dataclass
 from html import unescape
+from html.entities import html5
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
 from urllib.parse import SplitResult, urlsplit
@@ -249,13 +250,7 @@ class _DecodedValueMap:
                 is_identity=True,
             )
             reference = match.group(0)
-            decoded_reference = unescape(reference)
-            self._append_segment(
-                decoded_reference,
-                match.start(),
-                match.end(),
-                is_identity=decoded_reference == reference,
-            )
+            self._append_reference(reference, match.start(), match.end())
             previous_end = match.end()
         self._append_segment(
             raw_value[previous_end:],
@@ -290,6 +285,59 @@ class _DecodedValueMap:
             )
         )
         self._decoded_length = decoded_end
+
+    def _append_reference(
+        self,
+        reference: str,
+        raw_start: int,
+        raw_end: int,
+    ) -> None:
+        reference_body = reference[1:]
+        if reference_body.startswith("#"):
+            decoded_reference = unescape(reference)
+            self._append_segment(
+                decoded_reference,
+                raw_start,
+                raw_end,
+                is_identity=decoded_reference == reference,
+            )
+            return
+
+        if reference_body in html5:
+            self._append_segment(
+                html5[reference_body],
+                raw_start,
+                raw_end,
+                is_identity=False,
+            )
+            return
+
+        for prefix_end in range(len(reference_body) - 1, 1, -1):
+            entity_name = reference_body[:prefix_end]
+            if entity_name not in html5:
+                continue
+
+            raw_prefix_end = raw_start + 1 + prefix_end
+            self._append_segment(
+                html5[entity_name],
+                raw_start,
+                raw_prefix_end,
+                is_identity=False,
+            )
+            self._append_segment(
+                reference_body[prefix_end:],
+                raw_prefix_end,
+                raw_end,
+                is_identity=True,
+            )
+            return
+
+        self._append_segment(
+            reference,
+            raw_start,
+            raw_end,
+            is_identity=True,
+        )
 
     def _segment_at(self, decoded_index: int) -> _DecodedSegment:
         segment_index = bisect_right(self._segment_starts, decoded_index) - 1
@@ -343,17 +391,19 @@ def _merge_spans(spans: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return merged
 
 
-def mask_http_urls(value: str) -> str:
+def mask_http_urls(
+    value: str,
+    *,
+    decode_html_entities: bool = True,
+) -> str:
     if not isinstance(value, str):
         return ""
     if not value:
         return value
 
-    spans = (
-        _decoded_http_url_spans(value)
-        if "&" in value
-        else _literal_http_url_spans(value)
-    )
+    spans = _literal_http_url_spans(value)
+    if decode_html_entities and "&" in value:
+        spans = _decoded_http_url_spans(value)
     if not spans:
         return value
 
@@ -372,7 +422,7 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
     if not matches:
         return []
 
-    masked_value = mask_http_urls(value)
+    masked_value = mask_http_urls(value, decode_html_entities=False)
 
     candidates: List[_Anchor] = []
     for match in matches:

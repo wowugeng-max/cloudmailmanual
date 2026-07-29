@@ -55,6 +55,41 @@ class VerificationLinkExtractionTest(unittest.TestCase):
         self.assertEqual(masked, expected)
         self.assertEqual(len(masked), len(value))
 
+    def test_mask_http_urls_preserves_unconsumed_charref_suffixes(self):
+        href = "https://example.test/verify-email?token=XYZ789"
+        cases = (
+            ("known_without_semicolon", f"&copyABC123,{href}"),
+            ("known_prefix_with_punctuation", f"&not-ABC123:{href}"),
+            ("known_with_semicolon", f"&copy;ABC123,{href}"),
+            ("numeric", f"&#169;ABC123,{href}"),
+            ("unknown_named", f"&unknownABC123,{href}"),
+        )
+
+        for case, value in cases:
+            with self.subTest(case=case):
+                prefix = value[:value.index(href)]
+                expected = f"{prefix}{' ' * len(href)}"
+                masked = verification_links.mask_http_urls(value)
+
+                self.assertEqual(masked, expected)
+                self.assertEqual(len(masked), len(value))
+
+    def test_mask_http_urls_literal_mode_does_not_decode_plain_text_entities(self):
+        href = (
+            "https://example.test/verify?x=1"
+            "&NewLine;token=ABC123"
+        )
+        value = f"Activate using {href} now"
+        expected = f"Activate using {' ' * len(href)} now"
+
+        masked = verification_links.mask_http_urls(
+            value,
+            decode_html_entities=False,
+        )
+
+        self.assertEqual(masked, expected)
+        self.assertEqual(len(masked), len(value))
+
     def test_mask_http_urls_handles_empty_and_non_string_values(self):
         mask_http_urls = getattr(verification_links, "mask_http_urls", None)
 

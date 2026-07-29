@@ -681,6 +681,95 @@ else:
             },
         )
 
+    def test_query_detail_keeps_code_after_partial_named_charref(self):
+        href = "https://example.test/verify-email?token=XYZ789"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": (
+                    "<p>Your verification code is "
+                    f"&copyABC123,{href}</p>"
+                ),
+                "sendEmail": "sender@example.test",
+                "subject": "Activate your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "ABC123",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Activate your account",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_detail_uses_literal_url_masking_for_plain_text(self):
+        href = (
+            "https://example.test/verify?x=1"
+            "&NewLine;token=ABC123"
+        )
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "text": f"Activate using {href}",
+                "sendEmail": "sender@example.test",
+                "subject": "Activate your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Activate your account",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_detail_defers_body_masking_when_subject_matches(self):
+        self.write_config(
+            {
+                "verification_code_rules": {
+                    "enabled_presets": [],
+                    "custom_patterns": [
+                        {
+                            "name": "Subject token",
+                            "pattern": r"subject-token: ([A-Z0-9]{6})",
+                        }
+                    ],
+                }
+            }
+        )
+        large_body = "&amp;" * 200_000
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "subject": "subject-token: ABC123",
+                "text": large_body,
+                "content": large_body,
+            }
+        ]
+
+        with (
+            patch("cloud_mail_client.mask_http_urls", return_value="") as mask_urls,
+            patch(
+                "cloud_mail_client.extract_verification_link",
+                return_value=None,
+            ) as extract_link,
+        ):
+            detail = client.query_verification_detail("a@example.com")
+
+        mask_urls.assert_not_called()
+        extract_link.assert_called_once_with(large_body, large_body)
+        self.assertEqual(detail["code"], "ABC123")
+
     def test_query_detail_returns_plain_text_bare_link_without_html(self):
         href = "https://example.test/verify-email?token=synthetic-value"
         client = CloudMailClient.__new__(CloudMailClient)
