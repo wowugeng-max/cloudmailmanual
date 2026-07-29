@@ -129,8 +129,9 @@ No route, database schema, or UI contract changes are required.
 ## Error Handling
 
 Malformed HTML, malformed URLs, invalid ports, and non-string inputs are
-ignored without aborting the mailbox query. Parser failures return no link and
-do not affect verification-code extraction.
+ignored without aborting the mailbox query. Expected parser input errors return
+no link and do not affect verification-code extraction; unexpected runtime or
+programming errors continue to propagate so defects are not silently hidden.
 
 ## Test Strategy
 
