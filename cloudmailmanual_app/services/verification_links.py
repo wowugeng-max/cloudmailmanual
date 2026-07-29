@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 
 __all__ = ["extract_verification_link"]
@@ -13,7 +13,28 @@ __all__ = ["extract_verification_link"]
 _ACTION_TERMS = ("verify", "confirm", "activate", "complete")
 _SUPPORT_TERMS = ("token", "verification", "email")
 _FOOTER_TERMS = ("unsubscribe", "privacy", "preferences", "terms")
-_INVISIBLE_TAGS = {"script", "style", "noscript", "template"}
+_INVISIBLE_TAGS = {"script", "style", "template"}
+_ACTION_VALUE_KEYS = {
+    "action",
+    "mode",
+    "step",
+    "operation",
+    "intent",
+    "type",
+}
+_OPAQUE_VALUE_KEYS = {
+    "token",
+    "signature",
+    "sig",
+    "code",
+    "key",
+    "hash",
+    "state",
+    "auth",
+}
+
+_PERCENT_ESCAPE_PATTERN = re.compile(r"%[0-9A-Fa-f]{2}")
+_ENCODED_QUERY_MARKER_PATTERN = re.compile(r"%3F", re.IGNORECASE)
 
 _TERM_PATTERNS = {
     term: re.compile(
@@ -144,17 +165,52 @@ def _count_terms(value: str, terms: Tuple[str, ...]) -> int:
     )
 
 
+def _count_terms_in_values(values: Tuple[str, ...], terms: Tuple[str, ...]) -> int:
+    return sum(
+        any(_TERM_PATTERNS[term].search(value.casefold()) for value in values)
+        for term in terms
+    )
+
+
+def _parameter_evidence(raw_value: str) -> Tuple[str, ...]:
+    evidence: List[str] = []
+    for field in raw_value.split("&"):
+        name, separator, value = field.partition("=")
+        evidence.append(name)
+        if separator:
+            normalized_name = name.casefold()
+            if normalized_name in _OPAQUE_VALUE_KEYS:
+                continue
+            if normalized_name in _ACTION_VALUE_KEYS:
+                evidence.append(value)
+    return tuple(evidence)
+
+
+def _url_evidence(parsed: SplitResult) -> Tuple[str, ...]:
+    path = parsed.path
+    encoded_query_marker = _ENCODED_QUERY_MARKER_PATTERN.search(path)
+    if encoded_query_marker:
+        path = path[: encoded_query_marker.start()]
+    path = _PERCENT_ESCAPE_PATTERN.sub(" ", path)
+
+    return (
+        path,
+        *_parameter_evidence(parsed.query),
+        *_parameter_evidence(parsed.fragment),
+    )
+
+
 def _score(anchor: _Anchor) -> Optional[int]:
     parsed = urlsplit(anchor.href)
-    url_evidence = " ".join((parsed.path, parsed.query, parsed.fragment))
+    url_evidence = _url_evidence(parsed)
     action_text = _count_terms(anchor.text, _ACTION_TERMS)
-    action_url = _count_terms(url_evidence, _ACTION_TERMS)
+    action_url = _count_terms_in_values(url_evidence, _ACTION_TERMS)
     if not action_text and not action_url:
         return None
 
-    combined = f"{anchor.text} {url_evidence}"
-    support = _count_terms(combined, _SUPPORT_TERMS)
-    footer = _count_terms(combined, _FOOTER_TERMS)
+    combined = (anchor.text, *url_evidence)
+    support = _count_terms_in_values(combined, _SUPPORT_TERMS)
+    footer = _count_terms_in_values(combined, _FOOTER_TERMS)
     return (
         action_text * _TEXT_ACTION_WEIGHT
         + action_url * _URL_ACTION_WEIGHT

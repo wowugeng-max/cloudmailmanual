@@ -109,6 +109,19 @@ class VerificationLinkExtractionTest(unittest.TestCase):
 
         self.assertIsNone(extract_verification_link(html))
 
+    def test_ignores_action_words_in_opaque_query_and_fragment_values(self):
+        hrefs = (
+            "https://example.test/account?token=confirm",
+            "https://example.test/account?token=abc-confirm-xyz",
+            "https://example.test/account#token=activate",
+            "https://example.test/account?signature=complete",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Open account</a>'
+                self.assertIsNone(extract_verification_link(html))
+
     def test_does_not_use_hostname_as_url_action_evidence(self):
         html = (
             '<a href="https://verify.example.test/privacy">'
@@ -132,6 +145,7 @@ class VerificationLinkExtractionTest(unittest.TestCase):
             "https://example.test/verify-email",
             "https://example.test/account?action=verify",
             "https://example.test/account#confirm",
+            "https://example.test/account?confirm=1",
         )
 
         for href in hrefs:
@@ -139,11 +153,28 @@ class VerificationLinkExtractionTest(unittest.TestCase):
                 html = f'<a href="{href}">Open account</a>'
                 self.assertEqual(extract_verification_link(html), href)
 
+    def test_extracts_action_from_aws_encoded_tracking_path(self):
+        href = (
+            "https://awstrack.me/L0/https:%2F%2Fservice.test%2Fapi%2Fverify-email"
+            "%3Ftoken%3Dredacted/abc"
+        )
+        html = f'<a href="{href}">Click here</a>'
+
+        self.assertEqual(extract_verification_link(html), href)
+
+    def test_ignores_encoded_query_values_after_tracking_path_separator(self):
+        href = (
+            "https://awstrack.me/L0/https:%2F%2Fservice.test%2Fapi%2Faccount"
+            "%3Ftoken%3Dconfirm/abc"
+        )
+        html = f'<a href="{href}">Click here</a>'
+
+        self.assertIsNone(extract_verification_link(html))
+
     def test_ignores_invisible_anchor_text(self):
         cases = (
             ("script", "confirm()"),
             ("style", "verify"),
-            ("noscript", "activate"),
             ("template", "complete"),
         )
 
@@ -155,6 +186,12 @@ class VerificationLinkExtractionTest(unittest.TestCase):
                     "</a>"
                 )
                 self.assertIsNone(extract_verification_link(html))
+
+    def test_treats_noscript_text_as_visible_anchor_text(self):
+        href = "https://example.test/account"
+        html = f'<a href="{href}"><noscript>Verify account</noscript></a>'
+
+        self.assertEqual(extract_verification_link(html), href)
 
     def test_rejects_malformed_absolute_http_urls(self):
         hrefs = (
