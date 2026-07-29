@@ -108,7 +108,9 @@ Before nearby context is sliced, every literal URL match in plain text or
 parser-produced visible HTML text is replaced with equal-length spaces in a
 masked copy. This preserves character positions while ensuring neither the
 current URL nor any neighboring URL can contribute action terms as visible
-text evidence.
+text evidence. When a 160-character context edge truncates existing text, one
+additional masked boundary character is retained. This prevents slicing
+`unverify` or `verifyx` into an artificial standalone `verify` term.
 
 HTML character references in visible text are interpreted as the user sees
 them, so `&amp;` becomes `&`. Anchor `href` values retain their exact
@@ -131,7 +133,11 @@ Every candidate uses the existing absolute-URL validation:
   empty or exactly `:` followed by a non-empty port accepted by `parsed.port`.
   Text suffixes and any additional `[` or `]` characters are rejected.
 - A non-bracketed authority rejects any `[` or `]` character and any hostname
-  containing `:`; ordinary DNS-label validation otherwise remains minimal.
+  containing `:`. Unicode hostnames are converted with the stdlib IDNA codec.
+  Numeric-and-dot-only hosts must pass `IPv4Address`; other encoded labels may
+  contain only ASCII letters, digits, and hyphens, may not start or end with a
+  hyphen, and must stay within 63 characters. The full hostname is limited to
+  253 encoded characters, with one trailing dot retained for compatibility.
 - An explicit empty port marker is rejected. Accessing `parsed.port` continues
   to reject non-numeric and out-of-range ports while ordinary ports remain
   valid.
@@ -150,10 +156,12 @@ The existing score remains the basis for selection:
   cannot qualify a candidate by themselves.
 - Footer terms reduce a candidate's score.
 
-For a bare URL, the candidate's text evidence includes at most 160 visible
-characters before and after the URL in the same HTML or plain-text body. This
-allows copy such as "Activate your account" to qualify a generic token URL
-without treating every token-bearing URL as a verification action.
+For a bare URL, the candidate's text evidence includes 160 visible characters
+before and after the URL in the same HTML or plain-text body, plus one boundary
+character on each side when the window truncates existing text. This allows
+copy such as "Activate your account" to qualify a generic token URL without
+treating every token-bearing URL as a verification action or inventing action
+word boundaries.
 
 Occurrences with the same `href` but different visible text or nearby context
 are validated and scored independently. Exact duplicate `(href, text)`
@@ -203,9 +211,11 @@ verification_url = extract_verification_link(html, text) or ""
 Code extraction order remains unchanged. A link-only message still returns an
 empty `code`, is not saved to verification history, and leaves the account
 unused. A code-plus-link message still saves code metadata and marks the
-account used. Before history persistence, literal HTTP(S) URLs in the subject
-are replaced with spaces and whitespace is normalized; the API response still
-returns the original subject.
+account used. Before history persistence, literal HTTP(S) URLs in sender,
+subject, and received time are replaced with spaces and whitespace is
+normalized; the API response still returns the original metadata. Automatic
+platform selection uses the sanitized sender and falls back to `验证码查询`
+when it becomes empty, while an explicit platform remains authoritative.
 
 No database schema or UI contract changes are required.
 
@@ -258,8 +268,10 @@ Add focused service and client tests for:
   anchor candidates, or verification codes.
 - Anchor `href` values with encoded newlines, tabs, or surrounding spaces being
   rejected without normalization, while empty hrefs are skipped.
-- Empty ports, consecutive hostname dots, literal host backslashes, and
-  out-of-range ports being rejected while IPv6 and ordinary ports remain valid.
+- Invalid DNS characters and labels, malformed numeric IPv4 hosts, empty ports,
+  consecutive hostname dots, literal host backslashes, and out-of-range ports
+  being rejected while IDN, IPv4, IPv6, trailing-dot DNS, and ordinary ports
+  remain valid.
 - Bracketed IPv6 authorities with `]evil` or additional `]` suffixes being
   rejected while no-port and valid-port forms remain accepted.
 - A patch-based contract proving visible HTML parsing is deferred when the

@@ -119,9 +119,10 @@ Code results continue to use the current code display and history behavior.
 - Only `http` and `https` links are exposed to the UI.
 - The server never requests, resolves, or validates the remote link.
 - Verification URLs are not logged, persisted, or copied into history records.
-- Literal HTTP(S) URLs embedded in a saved message subject are masked and the
-  remaining whitespace is normalized; the API response retains the original
-  subject for display.
+- Literal HTTP(S) URLs embedded in saved sender, subject, or received-time
+  metadata are masked and remaining whitespace is normalized; the API response
+  retains the original values for display. Automatic platform selection uses
+  the sanitized sender and falls back to `验证码查询` when empty.
 - The frontend treats the URL as an attribute value and keeps user-visible
   labels static to prevent HTML injection.
 - A link-only result does not trigger account-used state changes.

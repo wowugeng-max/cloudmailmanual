@@ -375,9 +375,14 @@ class VerificationRulesApiTest(unittest.TestCase):
             "a@example.com", used=True, platform="Test"
         )
 
-    def test_url_bearing_subject_is_masked_only_in_saved_history(self):
+    def test_url_bearing_metadata_is_masked_only_in_saved_history(self):
         href = "https://example.test/confirm?token=ABC123"
+        sender = "https://metadata.example.test/sender?token=SENDER123"
         subject = f"Verification code: 654321\n  Activate using {href}  now"
+        received_time = (
+            "2026-07-29 10:00:00 "
+            "https://metadata.example.test/time?token=TIME123"
+        )
         self.login()
 
         with (
@@ -388,9 +393,9 @@ class VerificationRulesApiTest(unittest.TestCase):
             client_class.return_value.query_verification_detail.return_value = {
                 "code": "654321",
                 "verification_url": href,
-                "sender": "sender@example.test",
+                "sender": sender,
                 "subject": subject,
-                "received_time": "2026-07-29 10:00:00",
+                "received_time": received_time,
             }
             response = self.client.post(
                 "/api/query-code",
@@ -400,23 +405,66 @@ class VerificationRulesApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data["verification_url"], href)
+        self.assertEqual(data["sender"], sender)
         self.assertEqual(data["subject"], subject)
+        self.assertEqual(data["received_time"], received_time)
         save_query.assert_called_once_with(
             "a@example.com",
             {
                 "code": "654321",
-                "sender": "sender@example.test",
+                "sender": "",
                 "subject": "Verification code: 654321 Activate using now",
                 "received_time": "2026-07-29 10:00:00",
             },
         )
-        saved_subject = save_query.call_args.args[1]["subject"]
-        self.assertNotIn("http", saved_subject)
-        self.assertNotIn("token=", saved_subject)
-        self.assertNotIn("ABC123", repr(save_query.call_args.args[1]))
+        saved_detail = repr(save_query.call_args.args[1])
+        self.assertNotIn("http", saved_detail)
+        self.assertNotIn("token=", saved_detail)
+        self.assertNotIn("ABC123", saved_detail)
         mark_used.assert_called_once_with(
             "a@example.com", used=True, platform="Test"
         )
+
+    def test_missing_platform_uses_sanitized_sender_or_fallback(self):
+        href = "https://metadata.example.test/sender?token=SENDER123"
+        cases = (
+            (f"Mail service {href}", "Mail service"),
+            (href, "验证码查询"),
+        )
+        self.login()
+
+        for sender, expected_platform in cases:
+            with self.subTest(sender=sender):
+                with (
+                    patch.object(routes, "CloudMailClient") as client_class,
+                    patch.object(routes, "save_verification_query") as save_query,
+                    patch.object(routes, "mark_account_used") as mark_used,
+                ):
+                    client_class.return_value.query_verification_detail.return_value = {
+                        "code": "654321",
+                        "verification_url": "",
+                        "sender": sender,
+                        "subject": "Verification code",
+                        "received_time": "2026-07-29 10:00:00",
+                    }
+                    response = self.client.post(
+                        "/api/query-code",
+                        json={"email": "a@example.com"},
+                    )
+
+                data = response.get_json()
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(data["sender"], sender)
+                self.assertEqual(data["mark_platform"], expected_platform)
+                mark_used.assert_called_once_with(
+                    "a@example.com",
+                    used=True,
+                    platform=expected_platform,
+                )
+                self.assertNotIn("http", repr(save_query.call_args.args[1]))
+                self.assertNotIn("token=", repr(save_query.call_args.args[1]))
+                self.assertNotIn("http", repr(mark_used.call_args))
+                self.assertNotIn("token=", repr(mark_used.call_args))
 
     def test_code_only_query_normalizes_missing_link_and_marks_used(self):
         self.login()

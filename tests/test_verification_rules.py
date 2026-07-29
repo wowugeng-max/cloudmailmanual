@@ -1262,6 +1262,35 @@ else:
             },
         )
 
+    def test_query_skips_latest_message_with_only_malformed_link(self):
+        malformed_href = "https://example^.test/verify"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": f'<a href="{malformed_href}">Verify</a>',
+                "sendEmail": "first@example.test",
+                "subject": "Verify first",
+                "createTime": "2026-07-29 10:00:00",
+            },
+            {
+                "text": "Your verification code is 654321",
+                "sendEmail": "second@example.test",
+                "subject": "Code second",
+                "createTime": "2026-07-29 09:00:00",
+            },
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "654321",
+                "verification_url": "",
+                "sender": "second@example.test",
+                "subject": "Code second",
+                "received_time": "2026-07-29 09:00:00",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

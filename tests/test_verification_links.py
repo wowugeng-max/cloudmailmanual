@@ -236,6 +236,28 @@ class VerificationLinkExtractionTest(unittest.TestCase):
 
         self.assertEqual(extract_verification_link("", text), href)
 
+    def test_context_radius_does_not_create_action_word_boundaries(self):
+        href = "https://example.test/account?token=synthetic-value"
+        radius = verification_links._TEXT_CONTEXT_RADIUS
+        boundary_padding = " " * (radius - len("verify"))
+        false_positive_texts = (
+            f"unverify{boundary_padding}{href}",
+            f"{href}{boundary_padding}verifyx",
+        )
+
+        for text in false_positive_texts:
+            with self.subTest(text=text):
+                self.assertIsNone(extract_verification_link("", text))
+
+        real_action_padding = " " * (radius - len(" verify"))
+        self.assertEqual(
+            extract_verification_link(
+                "",
+                f"{href}{real_action_padding} verify",
+            ),
+            href,
+        )
+
     def test_action_word_inside_opaque_bare_token_is_not_text_evidence(self):
         text = (
             "Account details: "
@@ -587,6 +609,37 @@ class VerificationLinkExtractionTest(unittest.TestCase):
             "https://example.test:8443/verify",
             "https://[2001:db8::1]/verify",
             "https://[2001:db8::1]:8443/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertEqual(extract_verification_link(html), href)
+
+    def test_rejects_invalid_unbracketed_dns_and_ipv4_hosts(self):
+        hrefs = (
+            "https://example^.test/verify",
+            "https://exa|mple.test/verify",
+            "https://999.999.999.999/verify",
+            "https://-example.test/verify",
+            "https://example-.test/verify",
+            f"https://{'a' * 64}.test/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertIsNone(extract_verification_link(html))
+
+    def test_accepts_valid_unbracketed_dns_idn_ipv4_and_ports(self):
+        hrefs = (
+            "https://example.test/verify",
+            "https://example.test./verify",
+            "https://example.test:8443/verify",
+            "https://例子.测试/verify",
+            "https://例子.测试:8443/verify",
+            "https://192.0.2.1/verify",
+            "https://192.0.2.1:8443/verify",
         )
 
         for href in hrefs:

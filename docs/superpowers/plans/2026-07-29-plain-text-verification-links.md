@@ -4,7 +4,7 @@
 
 **Goal:** Recognize verification links that appear as complete URLs in visible HTML or plain-text email bodies while preserving the existing safe link, history, and account-state behavior.
 
-**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus decoded visible `handle_data()` content, excluding `head`, `script`, `style`, `template`, and attributes. Scan visible HTML and plain text with a bounded HTTP(S) URL matcher, mask every literal URL span before collecting nearby text, feed distinct candidate evidence through the existing URL validator and action-term scorer, and cache URL work by `href` within one extraction call. `CloudMailClient` masks plain text directly and parser-produced visible HTML text separately; it never maps decoded URL spans back into raw HTML or runs whole-document `html.unescape()`. Routes, persistence, and UI contracts remain unchanged.
+**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus decoded visible `handle_data()` content, excluding `head`, `script`, `style`, `template`, and attributes. Scan visible HTML and plain text with a bounded HTTP(S) URL matcher, mask every literal URL span before collecting nearby text, feed distinct candidate evidence through the existing URL validator and action-term scorer, and cache URL work by `href` within one extraction call. `CloudMailClient` masks plain text directly and parser-produced visible HTML text separately; it never maps decoded URL spans back into raw HTML or runs whole-document `html.unescape()`. The route sanitizes external metadata only at the history/account-state boundary; database schema and UI contracts remain unchanged.
 
 **Tech Stack:** Python 3.9, stdlib `html.parser`, `re`, `urllib.parse`, `unittest`, `pytest`, existing Flask application and Node VM UI tests.
 
@@ -274,12 +274,18 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
         if not href:
             continue
 
-        before = masked_value[
-            max(0, match.start() - _TEXT_CONTEXT_RADIUS):match.start()
-        ]
-        after = masked_value[
-            match.end():match.end() + _TEXT_CONTEXT_RADIUS
-        ]
+        before_start = max(0, match.start() - _TEXT_CONTEXT_RADIUS)
+        if before_start:
+            before_start -= 1
+        after_end = min(
+            len(masked_value),
+            match.end() + _TEXT_CONTEXT_RADIUS,
+        )
+        if after_end < len(masked_value):
+            after_end += 1
+
+        before = masked_value[before_start:match.start()]
+        after = masked_value[match.end():after_end]
         candidates.append(_Anchor(href=href, text=f"{before} {after}"))
     return candidates
 ```
@@ -287,6 +293,8 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
 Mask every matched URL span with equal-length spaces before slicing context. Do
 not include the current or any neighboring URL in `text`; action terms inside
 `token`, `signature`, and other opaque URL values must remain URL evidence only.
+Retain one masked boundary character whenever either 160-character edge cuts
+through existing text so slicing cannot manufacture a standalone action term.
 
 - [ ] **Step 5: Separate text scoring from parsed URL evidence**
 
@@ -398,8 +406,10 @@ identifiers) or RFC IPvFuture literals inside the brackets. Reject bracketed
 DNS names and IPv4 addresses. After `]`, accept only an empty suffix or `:`
 followed by a non-empty port validated by `parsed.port`; reject text suffixes
 and any additional bracket. For non-bracketed authority, reject all brackets
-and colon-containing hostnames while retaining the existing minimal DNS-label
-checks.
+and colon-containing hostnames, convert Unicode through stdlib IDNA, require
+numeric-and-dot-only hosts to pass `IPv4Address`, and validate every other
+encoded label for ASCII alphanumeric/hyphen syntax, non-hyphen edges, 63-byte
+label limits, and a 253-character whole-host limit. Preserve one trailing dot.
 
 Skip only exact duplicate `(href, candidate.text)` evidence. Different
 occurrences with different labels or nearby context remain independently
@@ -658,8 +668,9 @@ Expected:
 - The worktree contains only intended commits and no uncommitted files.
 - No parser code calls a network client or URL decoder.
 - `verification_url` remains excluded from `save_verification_query()` input.
-- Literal HTTP(S) URLs are masked from the persisted subject and its remaining
-  whitespace is normalized, while the API still returns the original subject.
+- Literal HTTP(S) URLs are masked from persisted sender, subject, and received
+  time and remaining whitespace is normalized, while the API still returns the
+  original values. Automatic platform selection uses sanitized sender metadata.
 - Test URLs contain only synthetic or explicitly redacted token values.
 
 - [ ] **Step 4: Inspect the final commit range**
@@ -688,6 +699,7 @@ The reviewer must inspect the complete `origin/main...HEAD` range for parser fal
 - [x] Absolute-URL validation and parsed URL evidence are cached once per `href` within each extraction call.
 - [x] Existing callers remain compatible through the optional
   `content_is_plain_text` argument.
-- [x] The route sanitizes subject URLs only at the history persistence boundary;
-  database schema, UI, Webmail, network, and decoding behavior remain unchanged.
+- [x] The route sanitizes sender, subject, and received-time URLs only at the
+  history/account-state boundary; database schema, UI, Webmail, network, and
+  decoding behavior remain unchanged.
 - [x] The final task verifies the entire pre-existing verification-link feature before merging to `main`.

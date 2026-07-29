@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from ipaddress import IPv6Address
+from ipaddress import IPv4Address, IPv6Address
 from typing import List, Optional, Tuple
 from urllib.parse import SplitResult, urlsplit
 
@@ -44,6 +44,10 @@ _BARE_HTTP_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _IPV_FUTURE_PATTERN = re.compile(
     r"[vV][0-9A-Fa-f]+\.[A-Za-z0-9._~!$&'()*+,;=:\-]+"
 )
+_DNS_LABEL_PATTERN = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+)
+_MAX_DNS_HOST_LENGTH = 253
 _TEXT_CONTEXT_RADIUS = 160
 _TRAILING_SENTENCE_PUNCTUATION = ".,!"
 _CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
@@ -205,10 +209,25 @@ def _has_valid_host_shape(
     if "[" in netloc or "]" in netloc or ":" in hostname:
         return False
 
-    labels = hostname.split(".")
-    if labels and not labels[-1]:
-        labels = labels[:-1]
-    return bool(labels) and all(labels)
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+
+    if ascii_hostname.endswith("."):
+        ascii_hostname = ascii_hostname[:-1]
+    if not ascii_hostname or len(ascii_hostname) > _MAX_DNS_HOST_LENGTH:
+        return False
+
+    if all(character.isdigit() or character == "." for character in ascii_hostname):
+        try:
+            IPv4Address(ascii_hostname)
+        except ValueError:
+            return False
+        return True
+
+    labels = ascii_hostname.split(".")
+    return all(_DNS_LABEL_PATTERN.fullmatch(label) for label in labels)
 
 
 def _is_absolute_http_url(value: str) -> bool:
@@ -341,12 +360,18 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
         if not href:
             continue
 
-        before = masked_value[
-            max(0, match.start() - _TEXT_CONTEXT_RADIUS):match.start()
-        ]
-        after = masked_value[
-            match.end():match.end() + _TEXT_CONTEXT_RADIUS
-        ]
+        before_start = max(0, match.start() - _TEXT_CONTEXT_RADIUS)
+        if before_start:
+            before_start -= 1
+        after_end = min(
+            len(masked_value),
+            match.end() + _TEXT_CONTEXT_RADIUS,
+        )
+        if after_end < len(masked_value):
+            after_end += 1
+
+        before = masked_value[before_start:match.start()]
+        after = masked_value[match.end():after_end]
         candidates.append(_Anchor(href=href, text=f"{before} {after}"))
     return candidates
 

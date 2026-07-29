@@ -499,19 +499,21 @@ if not normalized_detail["code"]:
         **normalized_detail,
     })
 
-history_subject = " ".join(
-    mask_http_urls(normalized_detail["subject"]).split()
-)
+history_sender = _sanitize_verification_metadata(normalized_detail["sender"])
 save_verification_query(
     email,
     {
         "code": normalized_detail["code"],
-        "sender": normalized_detail["sender"],
-        "subject": history_subject,
-        "received_time": normalized_detail["received_time"],
+        "sender": history_sender,
+        "subject": _sanitize_verification_metadata(
+            normalized_detail["subject"]
+        ),
+        "received_time": _sanitize_verification_metadata(
+            normalized_detail["received_time"]
+        ),
     },
 )
-auto_platform = platform or normalized_detail["sender"] or "验证码查询"
+auto_platform = platform or history_sender or "验证码查询"
 mark_account_used(email, used=True, platform=auto_platform)
 return jsonify({
     "ok": True,
@@ -525,8 +527,10 @@ return jsonify({
 
 This keeps the existing code behavior, returns a link alongside a code, and
 guarantees that neither `verification_url` nor a literal HTTP(S) URL embedded
-in the persisted subject reaches `save_verification_query()`. The API response
-continues to expose the original subject.
+in persisted sender, subject, or received time reaches
+`save_verification_query()`. Automatic platform selection uses the sanitized
+sender unless an explicit platform was supplied, and the API response continues
+to expose the original metadata.
 
 - [ ] **Step 3: Run focused and regression API tests**
 
