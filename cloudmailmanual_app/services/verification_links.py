@@ -1,22 +1,23 @@
 from __future__ import annotations
 
 import re
-from bisect import bisect_right
 from dataclasses import dataclass
-from html import unescape
-from html.entities import html5
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
 from urllib.parse import SplitResult, urlsplit
 
 
-__all__ = ["extract_verification_link", "mask_http_urls"]
+__all__ = [
+    "extract_verification_link",
+    "extract_visible_html_text",
+    "mask_http_urls",
+]
 
 
 _ACTION_TERMS = ("verify", "confirm", "activate", "complete")
 _SUPPORT_TERMS = ("token", "verification", "email")
 _FOOTER_TERMS = ("unsubscribe", "privacy", "preferences", "terms")
-_INVISIBLE_TAGS = {"script", "style", "template"}
+_INVISIBLE_TAGS = {"head", "script", "style", "template"}
 _ACTION_VALUE_KEYS = {
     "action",
     "mode",
@@ -39,9 +40,6 @@ _OPAQUE_VALUE_KEYS = {
 _PERCENT_ESCAPE_PATTERN = re.compile(r"%[0-9A-Fa-f]{2}")
 _ENCODED_QUERY_MARKER_PATTERN = re.compile(r"%3F", re.IGNORECASE)
 _BARE_HTTP_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-_HTML_CHARREF_PATTERN = re.compile(
-    r"&(#[0-9]+;?|#[xX][0-9A-Fa-f]+;?|[^\t\n\f <&#;]{1,32};?)"
-)
 _TEXT_CONTEXT_RADIUS = 160
 _TRAILING_SENTENCE_PUNCTUATION = ".,!"
 _CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
@@ -63,15 +61,6 @@ _FOOTER_PENALTY = 2
 class _Anchor:
     href: str
     text: str
-
-
-@dataclass(frozen=True)
-class _DecodedSegment:
-    decoded_start: int
-    decoded_end: int
-    raw_start: int
-    raw_end: int
-    is_identity: bool
 
 
 class _AnchorParser(HTMLParser):
@@ -146,6 +135,24 @@ class _AnchorParser(HTMLParser):
     def close(self) -> None:
         super().close()
         self._finish_anchor()
+
+
+def _parse_html(raw_html: str) -> _AnchorParser:
+    parser = _AnchorParser()
+    parser.feed(raw_html)
+    parser.close()
+    return parser
+
+
+def extract_visible_html_text(raw_html: str) -> str:
+    if not isinstance(raw_html, str) or not raw_html:
+        return ""
+
+    try:
+        parser = _parse_html(raw_html)
+    except (TypeError, ValueError):
+        return ""
+    return " ".join(parser.visible_text_parts)
 
 
 def _has_forbidden_url_characters(value: str) -> bool:
@@ -234,128 +241,6 @@ def _trim_bare_url_candidate(value: str) -> str:
     return trimmed
 
 
-class _DecodedValueMap:
-    def __init__(self, raw_value: str) -> None:
-        self._parts: List[str] = []
-        self._segments: List[_DecodedSegment] = []
-        self._segment_starts: List[int] = []
-        self._decoded_length = 0
-
-        previous_end = 0
-        for match in _HTML_CHARREF_PATTERN.finditer(raw_value):
-            self._append_segment(
-                raw_value[previous_end:match.start()],
-                previous_end,
-                match.start(),
-                is_identity=True,
-            )
-            reference = match.group(0)
-            self._append_reference(reference, match.start(), match.end())
-            previous_end = match.end()
-        self._append_segment(
-            raw_value[previous_end:],
-            previous_end,
-            len(raw_value),
-            is_identity=True,
-        )
-        self.value = "".join(self._parts)
-
-    def _append_segment(
-        self,
-        decoded_value: str,
-        raw_start: int,
-        raw_end: int,
-        *,
-        is_identity: bool,
-    ) -> None:
-        if not decoded_value:
-            return
-
-        decoded_start = self._decoded_length
-        decoded_end = decoded_start + len(decoded_value)
-        self._parts.append(decoded_value)
-        self._segment_starts.append(decoded_start)
-        self._segments.append(
-            _DecodedSegment(
-                decoded_start=decoded_start,
-                decoded_end=decoded_end,
-                raw_start=raw_start,
-                raw_end=raw_end,
-                is_identity=is_identity,
-            )
-        )
-        self._decoded_length = decoded_end
-
-    def _append_reference(
-        self,
-        reference: str,
-        raw_start: int,
-        raw_end: int,
-    ) -> None:
-        reference_body = reference[1:]
-        if reference_body.startswith("#"):
-            decoded_reference = unescape(reference)
-            self._append_segment(
-                decoded_reference,
-                raw_start,
-                raw_end,
-                is_identity=decoded_reference == reference,
-            )
-            return
-
-        if reference_body in html5:
-            self._append_segment(
-                html5[reference_body],
-                raw_start,
-                raw_end,
-                is_identity=False,
-            )
-            return
-
-        for prefix_end in range(len(reference_body) - 1, 1, -1):
-            entity_name = reference_body[:prefix_end]
-            if entity_name not in html5:
-                continue
-
-            raw_prefix_end = raw_start + 1 + prefix_end
-            self._append_segment(
-                html5[entity_name],
-                raw_start,
-                raw_prefix_end,
-                is_identity=False,
-            )
-            self._append_segment(
-                reference_body[prefix_end:],
-                raw_prefix_end,
-                raw_end,
-                is_identity=True,
-            )
-            return
-
-        self._append_segment(
-            reference,
-            raw_start,
-            raw_end,
-            is_identity=True,
-        )
-
-    def _segment_at(self, decoded_index: int) -> _DecodedSegment:
-        segment_index = bisect_right(self._segment_starts, decoded_index) - 1
-        return self._segments[segment_index]
-
-    def raw_start(self, decoded_index: int) -> int:
-        segment = self._segment_at(decoded_index)
-        if segment.is_identity:
-            return segment.raw_start + decoded_index - segment.decoded_start
-        return segment.raw_start
-
-    def raw_end(self, decoded_end: int) -> int:
-        segment = self._segment_at(decoded_end - 1)
-        if segment.is_identity:
-            return segment.raw_start + decoded_end - segment.decoded_start
-        return segment.raw_end
-
-
 def _literal_http_url_spans(value: str) -> List[Tuple[int, int]]:
     spans: List[Tuple[int, int]] = []
     for match in _BARE_HTTP_URL_PATTERN.finditer(value):
@@ -365,51 +250,19 @@ def _literal_http_url_spans(value: str) -> List[Tuple[int, int]]:
     return spans
 
 
-def _decoded_http_url_spans(value: str) -> List[Tuple[int, int]]:
-    decoded = _DecodedValueMap(value)
-    spans: List[Tuple[int, int]] = []
-    for match in _BARE_HTTP_URL_PATTERN.finditer(decoded.value):
-        href = _trim_bare_url_candidate(match.group(0))
-        if not href:
-            continue
-        decoded_start = match.start()
-        decoded_end = decoded_start + len(href)
-        spans.append(
-            (decoded.raw_start(decoded_start), decoded.raw_end(decoded_end))
-        )
-    return spans
-
-
-def _merge_spans(spans: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
-    merged: List[Tuple[int, int]] = []
-    for start, end in sorted(spans):
-        if not merged or start > merged[-1][1]:
-            merged.append((start, end))
-            continue
-        previous_start, previous_end = merged[-1]
-        merged[-1] = (previous_start, max(previous_end, end))
-    return merged
-
-
-def mask_http_urls(
-    value: str,
-    *,
-    decode_html_entities: bool = True,
-) -> str:
+def mask_http_urls(value: str) -> str:
     if not isinstance(value, str):
         return ""
     if not value:
         return value
 
     spans = _literal_http_url_spans(value)
-    if decode_html_entities and "&" in value:
-        spans = _decoded_http_url_spans(value)
     if not spans:
         return value
 
     masked_parts: List[str] = []
     previous_end = 0
-    for start, end in _merge_spans(spans):
+    for start, end in spans:
         masked_parts.append(value[previous_end:start])
         masked_parts.append(" " * (end - start))
         previous_end = end
@@ -422,7 +275,7 @@ def _bare_url_candidates(value: str) -> List[_Anchor]:
     if not matches:
         return []
 
-    masked_value = mask_http_urls(value, decode_html_entities=False)
+    masked_value = mask_http_urls(value)
 
     candidates: List[_Anchor] = []
     for match in matches:
@@ -474,13 +327,13 @@ def extract_verification_link(
     if not raw_html and not raw_text:
         return None
 
-    parser = _AnchorParser()
     if raw_html:
         try:
-            parser.feed(raw_html)
-            parser.close()
+            parser = _parse_html(raw_html)
         except (TypeError, ValueError):
             return None
+    else:
+        parser = _AnchorParser()
 
     visible_html = " ".join(parser.visible_text_parts)
     candidates = [

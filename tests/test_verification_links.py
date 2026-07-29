@@ -17,64 +17,49 @@ class VerificationLinkExtractionTest(unittest.TestCase):
         self.assertEqual(mask_http_urls(value), expected)
         self.assertEqual(len(mask_http_urls(value)), len(value))
 
-    def test_mask_http_urls_masks_entity_encoded_scheme_span(self):
-        encoded_schemes = ("https&#58;//", "https&#x3A;//", "https&colon;//")
-
-        for encoded_scheme in encoded_schemes:
-            with self.subTest(encoded_scheme=encoded_scheme):
-                encoded_href = (
-                    f"{encoded_scheme}example.test/verify?token=ABC123"
-                )
-                value = f"Keep A&amp;B before {encoded_href} after"
-                expected = (
-                    f"Keep A&amp;B before {' ' * len(encoded_href)} after"
-                )
-
-                masked = verification_links.mask_http_urls(value)
-
-                self.assertEqual(masked, expected)
-                self.assertEqual(len(masked), len(value))
-
-    def test_mask_http_urls_masks_entity_encoded_slashes(self):
-        encoded_href = "https:&#47;&#47;example.test/verify?token=ABC123"
-        value = f"Keep A&amp;B before {encoded_href}. after"
-        expected = f"Keep A&amp;B before {' ' * len(encoded_href)}. after"
-
-        masked = verification_links.mask_http_urls(value)
-
-        self.assertEqual(masked, expected)
-        self.assertEqual(len(masked), len(value))
-
-    def test_mask_http_urls_masks_entity_encoded_scheme_letter(self):
-        encoded_href = "htt&#112;s://example.test/verify?token=ABC123"
-        value = f"Keep A&amp;B before {encoded_href}. after"
-        expected = f"Keep A&amp;B before {' ' * len(encoded_href)}. after"
-
-        masked = verification_links.mask_http_urls(value)
-
-        self.assertEqual(masked, expected)
-        self.assertEqual(len(masked), len(value))
-
-    def test_mask_http_urls_preserves_unconsumed_charref_suffixes(self):
-        href = "https://example.test/verify-email?token=XYZ789"
-        cases = (
-            ("known_without_semicolon", f"&copyABC123,{href}"),
-            ("known_prefix_with_punctuation", f"&not-ABC123:{href}"),
-            ("known_with_semicolon", f"&copy;ABC123,{href}"),
-            ("numeric", f"&#169;ABC123,{href}"),
-            ("unknown_named", f"&unknownABC123,{href}"),
+    def test_extract_visible_html_text_decodes_data_without_scanning_attributes(self):
+        html = (
+            '<div title="&gt;ABC123">'
+            "Your code is &lt;ABC123&gt;. "
+            "Activate using https&#58;//example.test/verify-email?token=XYZ789"
+            "</div>"
         )
 
-        for case, value in cases:
-            with self.subTest(case=case):
-                prefix = value[:value.index(href)]
-                expected = f"{prefix}{' ' * len(href)}"
-                masked = verification_links.mask_http_urls(value)
+        self.assertIn("extract_visible_html_text", verification_links.__all__)
+        self.assertEqual(
+            verification_links.extract_visible_html_text(html),
+            (
+                "Your code is <ABC123>. "
+                "Activate using https://example.test/verify-email?token=XYZ789"
+            ),
+        )
 
-                self.assertEqual(masked, expected)
-                self.assertEqual(len(masked), len(value))
+    def test_extract_visible_html_text_excludes_invisible_elements(self):
+        html = (
+            "<head>&lt;/head&gt;ABC123</head>"
+            "<script>&lt;/script&gt;ABC123</script>"
+            "<style>&lt;/style&gt;ABC123</style>"
+            "<template>&lt;/template&gt;ABC123</template>"
+            "<p>Visible &lt;ABC123&gt;</p>"
+        )
 
-    def test_mask_http_urls_literal_mode_does_not_decode_plain_text_entities(self):
+        self.assertEqual(
+            verification_links.extract_visible_html_text(html),
+            "Visible <ABC123>",
+        )
+
+    def test_mask_http_urls_only_masks_literal_http_urls(self):
+        encoded_href = "https&#58;//example.test/verify?token=ABC123"
+        literal_href = "https://example.test/verify?token=XYZ789"
+        value = f"{encoded_href} then {literal_href}"
+        expected = f"{encoded_href} then {' ' * len(literal_href)}"
+
+        masked = verification_links.mask_http_urls(value)
+
+        self.assertEqual(masked, expected)
+        self.assertEqual(len(masked), len(value))
+
+    def test_mask_http_urls_keeps_plain_text_entities_literal(self):
         href = (
             "https://example.test/verify?x=1"
             "&NewLine;token=ABC123"
@@ -82,10 +67,7 @@ class VerificationLinkExtractionTest(unittest.TestCase):
         value = f"Activate using {href} now"
         expected = f"Activate using {' ' * len(href)} now"
 
-        masked = verification_links.mask_http_urls(
-            value,
-            decode_html_entities=False,
-        )
+        masked = verification_links.mask_http_urls(value)
 
         self.assertEqual(masked, expected)
         self.assertEqual(len(masked), len(value))

@@ -4,7 +4,7 @@
 
 **Goal:** Recognize verification links that appear as complete URLs in visible HTML or plain-text email bodies while preserving the existing safe link, history, and account-state behavior.
 
-**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus visible-text content, then scan visible HTML and plain text with a bounded HTTP(S) URL matcher. Mask every matched URL span before collecting nearby text, feed distinct candidate evidence through the existing URL validator and action-term scorer, and cache URL work by `href` within one extraction call. Export the same equal-length URL masker for `CloudMailClient`, which scans masked body copies for verification codes while passing the original HTML and plain text to link extraction. Routes, persistence, and UI contracts remain unchanged.
+**Architecture:** Extend the existing stdlib `HTMLParser` service so it emits anchor candidates plus decoded visible `handle_data()` content, excluding `head`, `script`, `style`, `template`, and attributes. Scan visible HTML and plain text with a bounded HTTP(S) URL matcher, mask every literal URL span before collecting nearby text, feed distinct candidate evidence through the existing URL validator and action-term scorer, and cache URL work by `href` within one extraction call. `CloudMailClient` masks plain text directly and parser-produced visible HTML text separately; it never maps decoded URL spans back into raw HTML or runs whole-document `html.unescape()`. Routes, persistence, and UI contracts remain unchanged.
 
 **Tech Stack:** Python 3.9, stdlib `html.parser`, `re`, `urllib.parse`, `unittest`, `pytest`, existing Flask application and Node VM UI tests.
 
@@ -12,8 +12,8 @@
 
 ## File Responsibilities
 
-- `cloudmailmanual_app/services/verification_links.py`: Parse anchor and bare-text URL candidates, validate them, score action evidence, return one untouched URL, and export equal-length HTTP(S) URL masking.
-- `cloud_mail_client.py`: Supply both original body representations to the link parser while using URL-masked body copies for code extraction without changing precedence.
+- `cloudmailmanual_app/services/verification_links.py`: Parse anchor and bare-text URL candidates, expose decoded visible HTML text, validate and score action evidence, return one untouched URL, and export literal equal-length HTTP(S) URL masking.
+- `cloud_mail_client.py`: Supply both original body representations to the link parser while lazily scanning URL-masked plain text and parser-produced visible HTML text in the established precedence order.
 - `tests/test_verification_links.py`: Define the parser's positive, negative, boundary, preservation, and security contracts.
 - `tests/test_verification_rules.py`: Verify `CloudMailClient` integration and unchanged link-only/code-plus-link semantics.
 
@@ -217,7 +217,10 @@ def handle_data(self, data: str) -> None:
         self._text_parts.append(data)
 ```
 
-This preserves nested visible anchor labels while excluding `script`, `style`, and `template` text from both anchor and bare-link evidence.
+This preserves nested visible anchor labels while excluding `head`, `script`,
+`style`, and `template` text from both anchor and bare-link evidence. Add an
+`extract_visible_html_text()` helper around the same parser; its output must be
+derived only from `handle_data()` and must never include attributes.
 
 - [ ] **Step 4: Add conservative bare-URL cleanup and context helpers**
 
@@ -528,24 +531,37 @@ second message containing both a real `654321` code and the same synthetic URL
 token, requiring the real code and untouched link. Use a visible HTML URL token
 to preserve the same link-only contract for HTML bodies.
 
-- [ ] **Step 2: Add the shared masking contract**
+- [ ] **Step 2: Add the literal masking and visible-text contracts**
 
 Export `mask_http_urls(value: str) -> str` from the verification-link service.
 Reuse `_BARE_HTTP_URL_PATTERN`, replace each matched span with equal-length
 spaces, return empty strings unchanged, and return `""` for non-string inputs.
+The masker handles literal HTTP(S) spans only.
+
+Export `extract_visible_html_text(raw_html: str) -> str` using stdlib
+`HTMLParser(convert_charrefs=True)`. Collect only visible `handle_data()` text,
+exclude `head`, `script`, `style`, and `template`, and never scan attributes.
+Delete raw HTML decoded-span maps, `bisect`/`html.entities.html5` machinery, and
+whole-document `html.unescape()` processing.
 
 - [ ] **Step 3: Isolate body code extraction from URL tokens**
 
-Within each message loop iteration, create:
+Within each message loop iteration, create body values lazily:
 
 ```python
 code_text = mask_http_urls(text)
-code_html = mask_http_urls(html)
+visible_html = extract_visible_html_text(html)
+code_html = mask_http_urls(visible_html)
 ```
 
-Keep subject extraction unchanged. Preserve the four body extraction calls and
-their order, substituting only `code_text` and `code_html`. Continue calling
-`extract_verification_link(html, text)` with the original bodies.
+Add a default-compatible `content_is_plain_text=False` argument to
+`extract_verification_code()`. Use `True` for `code_text` and `code_html` so a
+visible literal such as `<ABC123>` is not removed as markup. Keep subject
+extraction unchanged and preserve this exact order: subject non-digits,
+subject digits, text non-digits, visible HTML non-digits, text digits, visible
+HTML digits. Do not call `extract_visible_html_text()` when text non-digits
+already matched. Continue calling `extract_verification_link(html, text)` with
+the original bodies.
 
 - [ ] **Step 4: Verify and commit**
 

@@ -5,7 +5,6 @@ import random
 import re
 import string
 import time
-from html import unescape
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -21,6 +20,7 @@ from cloudmailmanual_app.repositories.verification_rules import (
 )
 from cloudmailmanual_app.services.verification_links import (
     extract_verification_link,
+    extract_visible_html_text,
     mask_http_urls,
 )
 
@@ -174,6 +174,7 @@ class CloudMailClient:
         content: str,
         *,
         allow_digits: bool = True,
+        content_is_plain_text: bool = False,
         rules: Optional[Dict[str, object]] = None,
         custom_pattern_deadline: Optional[float] = None,
     ) -> Optional[str]:
@@ -181,11 +182,12 @@ class CloudMailClient:
             return None
 
         normalized = str(content)
-        normalized = re.sub(r"<head\b[\s\S]*?</head>", " ", normalized, flags=re.IGNORECASE)
-        normalized = re.sub(r"<style\b[\s\S]*?</style>", " ", normalized, flags=re.IGNORECASE)
-        normalized = re.sub(r"<script\b[\s\S]*?</script>", " ", normalized, flags=re.IGNORECASE)
-        normalized = re.sub(r"<!--.*?-->", " ", normalized, flags=re.DOTALL)
-        normalized = re.sub(r"<[^>]+>", " ", normalized)
+        if not content_is_plain_text:
+            normalized = re.sub(r"<head\b[\s\S]*?</head>", " ", normalized, flags=re.IGNORECASE)
+            normalized = re.sub(r"<style\b[\s\S]*?</style>", " ", normalized, flags=re.IGNORECASE)
+            normalized = re.sub(r"<script\b[\s\S]*?</script>", " ", normalized, flags=re.IGNORECASE)
+            normalized = re.sub(r"<!--.*?-->", " ", normalized, flags=re.DOTALL)
+            normalized = re.sub(r"<[^>]+>", " ", normalized)
         normalized = re.sub(r"\s+", " ", normalized).strip()[:200_000]
 
         selected = (
@@ -283,24 +285,24 @@ class CloudMailClient:
                 )
 
             # 主题没有再查正文（同样先偏好非纯数字）
+            code_text = ""
+            code_html = ""
             if not code:
-                code_text = mask_http_urls(
-                    text,
-                    decode_html_entities=False,
-                )
-                code_html = unescape(
-                    mask_http_urls(html, decode_html_entities=True)
-                )
+                code_text = mask_http_urls(text)
                 code = self.extract_verification_code(
                     code_text,
                     allow_digits=False,
+                    content_is_plain_text=True,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,
                 )
             if not code:
+                visible_html = extract_visible_html_text(html) if html else ""
+                code_html = mask_http_urls(visible_html)
                 code = self.extract_verification_code(
                     code_html,
                     allow_digits=False,
+                    content_is_plain_text=True,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,
                 )
@@ -308,6 +310,7 @@ class CloudMailClient:
                 code = self.extract_verification_code(
                     code_text,
                     allow_digits=True,
+                    content_is_plain_text=True,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,
                 )
@@ -315,6 +318,7 @@ class CloudMailClient:
                 code = self.extract_verification_code(
                     code_html,
                     allow_digits=True,
+                    content_is_plain_text=True,
                     rules=rules,
                     custom_pattern_deadline=custom_pattern_deadline,
                 )

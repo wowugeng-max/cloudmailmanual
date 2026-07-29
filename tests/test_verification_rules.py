@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, call, patch
 
 from cloud_mail_client import CloudMailClient
 from cloudmailmanual_app.repositories import verification_rules
@@ -506,6 +506,24 @@ else:
             "ABC123",
         )
 
+    def test_plain_text_mode_preserves_literal_angle_bracket_code(self):
+        rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
+
+        self.assertIsNone(
+            CloudMailClient.extract_verification_code(
+                "<ABC123>",
+                rules=rules,
+            )
+        )
+        self.assertEqual(
+            CloudMailClient.extract_verification_code(
+                "<ABC123>",
+                content_is_plain_text=True,
+                rules=rules,
+            ),
+            "ABC123",
+        )
+
     def test_alnum_preset_rejects_lowercase_bare_code(self):
         rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
 
@@ -681,14 +699,15 @@ else:
             },
         )
 
-    def test_query_detail_keeps_code_after_partial_named_charref(self):
+    def test_query_detail_extracts_angle_bracket_code_and_entity_scheme_link(self):
         href = "https://example.test/verify-email?token=XYZ789"
         client = CloudMailClient.__new__(CloudMailClient)
         client._email_list = lambda **_: [
             {
                 "content": (
-                    "<p>Your verification code is "
-                    f"&copyABC123,{href}</p>"
+                    "<p>Your verification code is &lt;ABC123&gt; "
+                    "Activate using "
+                    "https&#58;//example.test/verify-email?token=XYZ789</p>"
                 ),
                 "sendEmail": "sender@example.test",
                 "subject": "Activate your account",
@@ -706,6 +725,43 @@ else:
                 "received_time": "2026-07-29 10:00:00",
             },
         )
+
+    def test_query_detail_does_not_extract_codes_from_hidden_html(self):
+        href = "https://example.test/verify-email?token=XYZ789"
+        encoded_href = "https&#58;//example.test/verify-email?token=XYZ789"
+        hidden_fragments = (
+            ("attribute", '<div title="&gt;ABC123"></div>'),
+            ("head", "<head>&lt;/head&gt;ABC123</head>"),
+            ("script", "<script>&lt;/script&gt;ABC123</script>"),
+            ("style", "<style>&lt;/style&gt;ABC123</style>"),
+            ("template", "<template>&lt;/template&gt;ABC123</template>"),
+        )
+
+        for case, hidden_fragment in hidden_fragments:
+            with self.subTest(case=case):
+                client = CloudMailClient.__new__(CloudMailClient)
+                client._email_list = lambda **_: [
+                    {
+                        "content": (
+                            f"{hidden_fragment}"
+                            f"<p>Activate using {encoded_href}</p>"
+                        ),
+                        "sendEmail": "sender@example.test",
+                        "subject": "Activate your account",
+                        "createTime": "2026-07-29 10:00:00",
+                    }
+                ]
+
+                self.assertEqual(
+                    client.query_verification_detail("a@example.com"),
+                    {
+                        "code": "",
+                        "verification_url": href,
+                        "sender": "sender@example.test",
+                        "subject": "Activate your account",
+                        "received_time": "2026-07-29 10:00:00",
+                    },
+                )
 
     def test_query_detail_uses_literal_url_masking_for_plain_text(self):
         href = (
@@ -769,6 +825,125 @@ else:
         mask_urls.assert_not_called()
         extract_link.assert_called_once_with(large_body, large_body)
         self.assertEqual(detail["code"], "ABC123")
+
+    def test_query_detail_defers_html_parsing_when_text_alnum_matches(self):
+        self.write_config(
+            {
+                "verification_code_rules": {
+                    "enabled_presets": ["alnum_6"],
+                    "custom_patterns": [],
+                }
+            }
+        )
+        text = "Your verification code is ABC123"
+        html = "<p>Your verification code is XYZ789</p>"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "subject": "Verification message",
+                "text": text,
+                "content": html,
+            }
+        ]
+
+        with (
+            patch(
+                "cloud_mail_client.extract_visible_html_text",
+                return_value="Your verification code is XYZ789",
+                create=True,
+            ) as visible_html,
+            patch(
+                "cloud_mail_client.mask_http_urls",
+                side_effect=lambda value, **_: value,
+            ) as mask_urls,
+            patch("cloud_mail_client.extract_verification_link", return_value=None),
+        ):
+            detail = client.query_verification_detail("a@example.com")
+
+        visible_html.assert_not_called()
+        mask_urls.assert_called_once_with(text)
+        self.assertEqual(detail["code"], "ABC123")
+
+    def test_query_detail_preserves_lazy_body_extraction_order(self):
+        subject = "Subject without a code"
+        text = "Text body 123456"
+        html = "<p>HTML body 654321</p>"
+        visible_html = "HTML body 654321"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {"subject": subject, "text": text, "content": html}
+        ]
+
+        with (
+            patch.object(
+                CloudMailClient,
+                "extract_verification_code",
+                side_effect=[None, None, None, None, None, "654321"],
+            ) as extract_code,
+            patch(
+                "cloud_mail_client.extract_visible_html_text",
+                return_value=visible_html,
+                create=True,
+            ) as extract_visible,
+            patch(
+                "cloud_mail_client.mask_http_urls",
+                side_effect=lambda value, **_: f"masked:{value}",
+            ) as mask_urls,
+            patch("cloud_mail_client.extract_verification_link", return_value=None),
+        ):
+            detail = client.query_verification_detail("a@example.com")
+
+        extract_visible.assert_called_once_with(html)
+        self.assertEqual(
+            mask_urls.call_args_list,
+            [call(text), call(visible_html)],
+        )
+        self.assertEqual(
+            extract_code.call_args_list,
+            [
+                call(
+                    subject,
+                    allow_digits=False,
+                    rules=ANY,
+                    custom_pattern_deadline=ANY,
+                ),
+                call(
+                    subject,
+                    allow_digits=True,
+                    rules=ANY,
+                    custom_pattern_deadline=ANY,
+                ),
+                call(
+                    f"masked:{text}",
+                    allow_digits=False,
+                    content_is_plain_text=True,
+                    rules=ANY,
+                    custom_pattern_deadline=ANY,
+                ),
+                call(
+                    f"masked:{visible_html}",
+                    allow_digits=False,
+                    content_is_plain_text=True,
+                    rules=ANY,
+                    custom_pattern_deadline=ANY,
+                ),
+                call(
+                    f"masked:{text}",
+                    allow_digits=True,
+                    content_is_plain_text=True,
+                    rules=ANY,
+                    custom_pattern_deadline=ANY,
+                ),
+                call(
+                    f"masked:{visible_html}",
+                    allow_digits=True,
+                    content_is_plain_text=True,
+                    rules=ANY,
+                    custom_pattern_deadline=ANY,
+                ),
+            ],
+        )
+        self.assertEqual(detail["code"], "654321")
 
     def test_query_detail_returns_plain_text_bare_link_without_html(self):
         href = "https://example.test/verify-email?token=synthetic-value"

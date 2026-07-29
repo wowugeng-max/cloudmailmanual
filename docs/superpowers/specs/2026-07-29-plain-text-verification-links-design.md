@@ -52,6 +52,18 @@ def extract_verification_link(
 Existing callers that pass only HTML remain compatible. `CloudMailClient`
 passes both the HTML and plain-text message bodies.
 
+The service also exposes visible HTML text extraction:
+
+```python
+def extract_visible_html_text(raw_html: str) -> str:
+    ...
+```
+
+This helper uses stdlib `HTMLParser` with character-reference conversion and
+collects only real `handle_data()` output. It excludes `head`, `script`,
+`style`, and `template` content and never scans attributes. There is no raw
+HTML span mapping or whole-document `html.unescape()` step.
+
 The service also exports a shared body-masking helper:
 
 ```python
@@ -71,11 +83,12 @@ The parser produces candidates from three sources in deterministic order:
 2. URL-shaped strings in visible HTML text.
 3. URL-shaped strings in the plain-text message body.
 
-The HTML parser continues to ignore `script`, `style`, and `template` content.
-It also collects visible text segments for bare-URL scanning. Anchor candidates
-and bare-text candidates remain separate occurrences even when they have the
-same exact URL, because each occurrence may have different visible text or
-nearby context.
+The HTML parser ignores `head`, `script`, `style`, and `template` content. It
+collects decoded visible text only from `handle_data()` for bare-URL scanning;
+attribute values never become visible evidence. Anchor candidates and
+bare-text candidates remain separate occurrences even when they have the same
+exact URL, because each occurrence may have different visible text or nearby
+context.
 
 Bare URLs are recognized with a bounded, linear regular expression beginning
 with `http://` or `https://` and ending at whitespace, quotes, or markup
@@ -83,10 +96,11 @@ delimiters. Candidate cleanup may remove only common sentence punctuation and
 unmatched closing brackets at the end. It must not alter query parameters,
 fragments, percent escapes, JWT-like values, or internal punctuation.
 
-Before nearby context is sliced, every URL match in the source body is replaced
-with equal-length spaces in a masked copy. This preserves character positions
-while ensuring neither the current URL nor any neighboring URL can contribute
-action terms as visible text evidence.
+Before nearby context is sliced, every literal URL match in plain text or
+parser-produced visible HTML text is replaced with equal-length spaces in a
+masked copy. This preserves character positions while ensuring neither the
+current URL nor any neighboring URL can contribute action terms as visible
+text evidence.
 
 HTML character references in visible text are interpreted as the user sees
 them, so `&amp;` becomes `&`. Anchor `href` values retain their parser-provided
@@ -130,18 +144,27 @@ its visible label is the URL itself.
 
 ## Client Integration
 
-For each message, `CloudMailClient.query_verification_detail()` creates masked
-copies for verification-code extraction:
+For each message, `CloudMailClient.query_verification_detail()` masks plain
+text directly and parses HTML into decoded visible text before masking:
 
 ```python
 code_text = mask_http_urls(text)
-code_html = mask_http_urls(html)
+visible_html = extract_visible_html_text(html)
+code_html = mask_http_urls(visible_html)
 ```
 
-Subject extraction remains completely unchanged. The four existing body code
-extraction calls keep their current order but use `code_text` and `code_html`.
-This prevents values such as `token=ABC123` inside an HTTP(S) URL from winning
-as an OTP while preserving a real code such as `654321` outside the URL.
+`CloudMailClient.extract_verification_code()` adds a default-compatible
+`content_is_plain_text=False` parameter. Existing callers retain the original
+HTML-cleaning behavior; parser-produced HTML text and the message's plain-text
+body pass `content_is_plain_text=True`, so visible literals such as
+`<ABC123>` are not mistaken for tags and removed.
+
+Subject extraction remains completely unchanged. Body extraction stays lazy
+and keeps this exact order: subject non-digits, subject digits, plain-text
+non-digits, visible-HTML non-digits, plain-text digits, visible-HTML digits.
+Visible HTML is not parsed when the plain-text non-digit pass succeeds. This
+prevents values such as `token=ABC123` inside an HTTP(S) URL from winning as an
+OTP while preserving a real code such as `654321` outside the URL.
 
 Link extraction continues to receive the original, untouched bodies:
 
@@ -197,6 +220,12 @@ Add focused service and client tests for:
   codes.
 - A real verification code outside a URL remaining extractable when the same
   body also contains an opaque alphanumeric URL token.
+- An entity-encoded visible `<ABC123>` code remaining extractable beside an
+  entity-encoded verification URL.
+- Attribute values and `head`, `script`, `style`, and `template` content,
+  including encoded closing-tag text, never leaking hidden codes.
+- A patch-based contract proving visible HTML parsing is deferred when the
+  plain-text non-digit pass succeeds.
 
 Run the focused parser/client suites, the complete Python suite, JavaScript UI
 checks, and the existing token-persistence scan before merging to `main`.
