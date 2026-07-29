@@ -625,31 +625,38 @@ else:
 
     def test_query_detail_ignores_entity_encoded_html_url_token_as_code(self):
         href = "https://example.test/verify?token=ABC123"
-        encoded_href = "https&#58;//example.test/verify?token=ABC123"
-        client = CloudMailClient.__new__(CloudMailClient)
-        client._email_list = lambda **_: [
-            {
-                "content": f"<p>Activate using {encoded_href}</p>",
-                "sendEmail": "sender@example.test",
-                "subject": "Activate your account",
-                "createTime": "2026-07-29 10:00:00",
-            }
-        ]
-
-        self.assertEqual(
-            client.query_verification_detail("a@example.com"),
-            {
-                "code": "",
-                "verification_url": href,
-                "sender": "sender@example.test",
-                "subject": "Activate your account",
-                "received_time": "2026-07-29 10:00:00",
-            },
+        encoded_hrefs = (
+            "https:&#47;&#47;example.test/verify?token=ABC123",
+            "htt&#112;s://example.test/verify?token=ABC123",
+            "https&#58;&#47;&#47;example.test/verify?token=ABC123",
         )
+
+        for encoded_href in encoded_hrefs:
+            with self.subTest(encoded_href=encoded_href):
+                client = CloudMailClient.__new__(CloudMailClient)
+                client._email_list = lambda **_: [
+                    {
+                        "content": f"<p>Activate using {encoded_href}</p>",
+                        "sendEmail": "sender@example.test",
+                        "subject": "Activate your account",
+                        "createTime": "2026-07-29 10:00:00",
+                    }
+                ]
+
+                self.assertEqual(
+                    client.query_verification_detail("a@example.com"),
+                    {
+                        "code": "",
+                        "verification_url": href,
+                        "sender": "sender@example.test",
+                        "subject": "Activate your account",
+                        "received_time": "2026-07-29 10:00:00",
+                    },
+                )
 
     def test_query_detail_keeps_code_outside_entity_encoded_html_url(self):
         href = "https://example.test/verify?token=ABC123"
-        encoded_href = "https&#58;//example.test/verify?token=ABC123"
+        encoded_href = "htt&#112;s://example.test/verify?token=ABC123"
         client = CloudMailClient.__new__(CloudMailClient)
         client._email_list = lambda **_: [
             {
