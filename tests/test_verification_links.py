@@ -528,6 +528,29 @@ class VerificationLinkExtractionTest(unittest.TestCase):
                 html = f'<a href="{href}">Verify account</a>'
                 self.assertEqual(extract_verification_link(html), href)
 
+    def test_rejects_invalid_suffixes_after_bracketed_ipv6_host(self):
+        hrefs = (
+            "https://[2001:db8::1]evil/verify",
+            "https://[2001:db8::1]]/verify",
+            "https://[2001:db8::1]]:443/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertIsNone(extract_verification_link(html))
+
+    def test_accepts_bracketed_ipv6_with_no_port_or_valid_port(self):
+        hrefs = (
+            "https://[2001:db8::1]/verify",
+            "https://[2001:db8::1]:443/verify",
+        )
+
+        for href in hrefs:
+            with self.subTest(href=href):
+                html = f'<a href="{href}">Verify account</a>'
+                self.assertEqual(extract_verification_link(html), href)
+
     def test_returns_none_for_non_string_html_without_parsing(self):
         parser_path = (
             "cloudmailmanual_app.services.verification_links._AnchorParser"

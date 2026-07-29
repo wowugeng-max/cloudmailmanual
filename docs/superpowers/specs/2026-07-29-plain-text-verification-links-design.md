@@ -118,6 +118,9 @@ Every candidate uses the existing absolute-URL validation:
 - Scheme must be `http` or `https`.
 - Hostname must be present, contain no literal backslash, and have no empty
   interior labels such as `example..test`; bracketed IPv6 remains valid.
+- After the matching `]` in a bracketed IPv6 authority, the remaining netloc
+  must be empty or exactly `:` followed by a non-empty port accepted by
+  `parsed.port`. Text suffixes and additional `]` characters are rejected.
 - An explicit empty port marker is rejected. Accessing `parsed.port` continues
   to reject non-numeric and out-of-range ports while ordinary ports remain
   valid.
@@ -240,6 +243,8 @@ Add focused service and client tests for:
   rejected without normalization, while empty hrefs are skipped.
 - Empty ports, consecutive hostname dots, literal host backslashes, and
   out-of-range ports being rejected while IPv6 and ordinary ports remain valid.
+- Bracketed IPv6 authorities with `]evil` or additional `]` suffixes being
+  rejected while no-port and valid-port forms remain accepted.
 - A patch-based contract proving visible HTML parsing is deferred when the
   plain-text non-digit pass succeeds.
 

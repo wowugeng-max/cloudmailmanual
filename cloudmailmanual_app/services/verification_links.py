@@ -164,11 +164,23 @@ def _has_forbidden_url_characters(value: str) -> bool:
     )
 
 
-def _has_valid_host_shape(parsed: SplitResult, hostname: str) -> bool:
+def _has_valid_host_shape(
+    parsed: SplitResult,
+    hostname: str,
+    port: Optional[int],
+) -> bool:
     if parsed.netloc.endswith(":") or "\\" in parsed.netloc:
         return False
     if ":" in hostname:
-        return parsed.netloc.startswith("[")
+        if not parsed.netloc.startswith("["):
+            return False
+        closing_bracket = parsed.netloc.find("]")
+        suffix = parsed.netloc[closing_bracket + 1:]
+        return not suffix or (
+            suffix.startswith(":")
+            and len(suffix) > 1
+            and port is not None
+        )
 
     labels = hostname.split(".")
     if labels and not labels[-1]:
@@ -183,7 +195,7 @@ def _is_absolute_http_url(value: str) -> bool:
     try:
         parsed = urlsplit(value)
         hostname = parsed.hostname
-        _ = parsed.port
+        port = parsed.port
         username = parsed.username
         password = parsed.password
     except (TypeError, ValueError):
@@ -194,7 +206,7 @@ def _is_absolute_http_url(value: str) -> bool:
         and bool(parsed.netloc)
         and bool(hostname)
         and bool(hostname.strip("."))
-        and _has_valid_host_shape(parsed, hostname)
+        and _has_valid_host_shape(parsed, hostname, port)
         and username is None
         and password is None
     )
