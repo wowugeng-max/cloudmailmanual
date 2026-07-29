@@ -290,6 +290,7 @@ def register_routes(app):
             if not detail:
                 empty_detail = {
                     "code": "",
+                    "verification_url": "",
                     "sender": "",
                     "subject": "",
                     "received_time": "",
@@ -308,11 +309,29 @@ def register_routes(app):
     
             normalized_detail = {
                 "code": str(detail.get("code", "")),
+                "verification_url": str(detail.get("verification_url", "")),
                 "sender": str(detail.get("sender", "")),
                 "subject": str(detail.get("subject", "")),
                 "received_time": str(detail.get("received_time", "")),
             }
-            save_verification_query(email, normalized_detail)
+            if not normalized_detail["code"]:
+                mark_account_used(email, used=False, platform="")
+
+                return jsonify({
+                    "ok": True,
+                    "email": email,
+                    "saved": False,
+                    "auto_marked_used": False,
+                    "mark_platform": "",
+                    **normalized_detail,
+                })
+
+            save_verification_query(email, {
+                "code": normalized_detail["code"],
+                "sender": normalized_detail["sender"],
+                "subject": normalized_detail["subject"],
+                "received_time": normalized_detail["received_time"],
+            })
     
             auto_platform = platform or normalized_detail.get("sender", "") or "验证码查询"
             mark_account_used(email, used=True, platform=auto_platform)
