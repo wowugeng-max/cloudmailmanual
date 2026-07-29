@@ -108,6 +108,7 @@ const assert = require('assert');
 
 const source = fs.readFileSync(0, 'utf8');
 const safeUrl = 'https://awstrack.me/L0/https:%2F%2FService.Example%2Fapi%2FVerify-Email%3Ftoken%3DAbC123XyZ/TrackCase';
+const secretMarker = 'AbC123XyZ';
 const innerHTMLWrites = [];
 const attributeWrites = [];
 const handlerWrites = [];
@@ -420,12 +421,24 @@ const runQuickQuery = async (payload, expectedUsed, expectedHistoryLoads, label)
 
   for (const write of innerHTMLWrites) {
     assert.ok(!write.value.includes(safeUrl), 'safe URL leaked into innerHTML');
+    assert.ok(
+      !String(write.value).toLowerCase().includes(secretMarker.toLowerCase()),
+      'decoded verification token leaked into innerHTML',
+    );
   }
   for (const write of attributeWrites) {
     assert.ok(!write.value.includes(safeUrl), 'safe URL leaked through setAttribute');
+    assert.ok(
+      !String(write.value).toLowerCase().includes(secretMarker.toLowerCase()),
+      'decoded verification token leaked through setAttribute',
+    );
   }
   for (const write of handlerWrites) {
     assert.ok(!write.value.includes(safeUrl), 'safe URL leaked into inline handler');
+    assert.ok(
+      !String(write.value).toLowerCase().includes(secretMarker.toLowerCase()),
+      'decoded verification token leaked into inline handler',
+    );
   }
 })().catch((error) => {
   console.error(error);
