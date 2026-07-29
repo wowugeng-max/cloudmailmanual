@@ -18,6 +18,7 @@ from cloudmailmanual_app.repositories.verification_rules import (
     get_default_verification_code_rules,
     get_verification_code_rules,
 )
+from cloudmailmanual_app.services.verification_links import extract_verification_link
 
 
 PRESET_PATTERNS = {
@@ -307,9 +308,15 @@ class CloudMailClient:
                     custom_pattern_deadline=custom_pattern_deadline,
                 )
 
-            if code:
+            try:
+                verification_url = extract_verification_link(html) or ""
+            except (TypeError, ValueError):
+                verification_url = ""
+
+            if code or verification_url:
                 return {
-                    "code": code,
+                    "code": code or "",
+                    "verification_url": verification_url,
                     "sender": str(row.get("sendEmail") or row.get("sendName") or ""),
                     "subject": subject,
                     "received_time": str(row.get("createTime") or ""),
@@ -318,7 +325,9 @@ class CloudMailClient:
 
     def query_verification_code(self, email: str) -> Optional[str]:
         detail = self.query_verification_detail(email)
-        return str(detail.get("code")) if detail else None
+        if not detail or not detail.get("code"):
+            return None
+        return str(detail["code"])
 
     @staticmethod
     def _generate_natural_local_part() -> str:

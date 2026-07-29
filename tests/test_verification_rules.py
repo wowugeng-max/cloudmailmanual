@@ -600,6 +600,138 @@ else:
 
         self.assertIsNone(client.query_verification_code("a@example.com"))
 
+    def test_query_detail_returns_link_only_without_code(self):
+        href = "https://example.test/verify?token=redacted"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": f'<a href="{href}">Verify Email Address</a>',
+                "sendEmail": "sender@example.test",
+                "subject": "Please verify",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Please verify",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_detail_returns_code_and_link_from_same_message(self):
+        href = "https://example.test/confirm?token=redacted"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": f'<p>Code: 123456</p><a href="{href}">Confirm</a>',
+                "text": "Code: 123456",
+                "sendEmail": "sender@example.test",
+                "subject": "Confirm your account",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "123456",
+                "verification_url": href,
+                "sender": "sender@example.test",
+                "subject": "Confirm your account",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_detail_includes_empty_link_for_code_only_message(self):
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "text": "Your verification code is 123456",
+                "sendEmail": "sender@example.test",
+                "subject": "Verification code",
+                "createTime": "2026-07-29 10:00:00",
+            }
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "123456",
+                "verification_url": "",
+                "sender": "sender@example.test",
+                "subject": "Verification code",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_verification_code_remains_none_for_link_only_message(self):
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": (
+                    '<a href="https://example.test/verify?token=redacted">'
+                    "Verify"
+                    "</a>"
+                )
+            }
+        ]
+
+        self.assertIsNone(client.query_verification_code("a@example.com"))
+
+    def test_link_extraction_failure_does_not_break_code_query(self):
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": "<p>Your code is 123456</p>",
+                "text": "Your code is 123456",
+            }
+        ]
+
+        with patch(
+            "cloud_mail_client.extract_verification_link",
+            side_effect=ValueError("malformed input"),
+        ):
+            detail = client.query_verification_detail("a@example.com")
+            code = client.query_verification_code("a@example.com")
+
+        self.assertEqual(code, "123456")
+        self.assertEqual(detail["code"], "123456")
+        self.assertEqual(detail["verification_url"], "")
+
+    def test_query_does_not_combine_results_from_different_messages(self):
+        first_href = "https://example.test/verify?token=first"
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": f'<a href="{first_href}">Verify</a>',
+                "sendEmail": "first@example.test",
+                "subject": "Verify first",
+                "createTime": "2026-07-29 10:00:00",
+            },
+            {
+                "text": "Your verification code is 654321",
+                "sendEmail": "second@example.test",
+                "subject": "Code second",
+                "createTime": "2026-07-29 09:00:00",
+            },
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "",
+                "verification_url": first_href,
+                "sender": "first@example.test",
+                "subject": "Verify first",
+                "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
