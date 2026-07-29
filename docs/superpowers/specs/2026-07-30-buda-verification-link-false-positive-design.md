@@ -63,4 +63,3 @@ rules in the UI.
 - Run the verification rules/link suites and then the complete test suite.
 - Query the reported mailbox and confirm the returned detail contains no code
   and contains the Buda verification URL.
-
