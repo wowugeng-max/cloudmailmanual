@@ -506,6 +506,16 @@ else:
             "ABC123",
         )
 
+    def test_alnum_preset_rejects_plain_uppercase_word(self):
+        rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
+
+        self.assertIsNone(
+            CloudMailClient.extract_verification_code(
+                "WHAT YOUR AGENTS CAN DO",
+                rules=rules,
+            )
+        )
+
     def test_plain_text_mode_preserves_literal_angle_bracket_code(self):
         rules = {"enabled_presets": ["alnum_6"], "custom_patterns": []}
 
@@ -1259,6 +1269,38 @@ else:
                 "sender": "first@example.test",
                 "subject": "Verify first",
                 "received_time": "2026-07-29 10:00:00",
+            },
+        )
+
+    def test_query_skips_newer_welcome_word_and_returns_older_buda_link(self):
+        href = (
+            "https://tracking.example.test/L0/"
+            "https:%2F%2Fbuda.im%2Fapi%2Fauth%2Fverify-email%3Ftoken=redacted"
+        )
+        client = CloudMailClient.__new__(CloudMailClient)
+        client._email_list = lambda **_: [
+            {
+                "content": "<h2>WHAT YOUR AGENTS CAN DO</h2>",
+                "sendEmail": "noreply@budaapps.com",
+                "subject": "Welcome to Buda AI: Agents as Company.",
+                "createTime": "2026-07-29 20:41:29",
+            },
+            {
+                "content": f'<a href="{href}">Verify Email Address</a>',
+                "sendEmail": "noreply@budaapps.com",
+                "subject": "Verify your email for Buda",
+                "createTime": "2026-07-29 20:38:18",
+            },
+        ]
+
+        self.assertEqual(
+            client.query_verification_detail("a@example.com"),
+            {
+                "code": "",
+                "verification_url": href,
+                "sender": "noreply@budaapps.com",
+                "subject": "Verify your email for Buda",
+                "received_time": "2026-07-29 20:38:18",
             },
         )
 

@@ -30,7 +30,7 @@ PRESET_PATTERNS = {
         r"(?<![A-Z0-9-])([A-Z0-9]{3}-[A-Z0-9]{3})(?![A-Z0-9-])"
     ],
     "alnum_6": [
-        r"(?<![A-Z0-9])((?=[A-Z0-9]{0,5}[A-Z])(?=[A-Z0-9]{6}(?![A-Z0-9]))[A-Z0-9]{6})(?![A-Z0-9])"
+        r"(?<![A-Z0-9])((?=[A-Z0-9]{0,5}[A-Z])(?=[A-Z0-9]{0,5}\d)(?=[A-Z0-9]{6}(?![A-Z0-9]))[A-Z0-9]{6})(?![A-Z0-9])"
     ],
     "labeled_code": [
         r"(?:verification code|验证码|your code|code is|code below|enter this code)[^A-Z0-9]{0,20}([A-Z0-9-]{6,8})\b",
@@ -237,7 +237,7 @@ class CloudMailClient:
                     if not code or code == "177010":
                         continue
                     if preset_id == "alnum_6" and not re.fullmatch(
-                        r"(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6}", code
+                        r"(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{6}", code
                     ):
                         continue
                     if preset_id == "alnum_hyphen_3_3" and not re.fullmatch(
