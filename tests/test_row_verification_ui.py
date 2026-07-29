@@ -30,8 +30,13 @@ class RowVerificationUiTest(unittest.TestCase):
 
         self.assertIn("if (stored) return stored;", html)
         self.assertIn("matchedSuffixLength", html)
-        self.assertIn("updateHistoryRowUsage(row, email, true)", html)
-        self.assertIn("updateHistoryRowUsage(row, email, false)", html)
+        self.assertIn(
+            "updateHistoryRowUsage(row, email, true, data.mark_platform)", html
+        )
+        self.assertIn(
+            "updateHistoryRowUsage(row, email, false, data.mark_platform)", html
+        )
+        self.assertIn('data-role="account-platform"', html)
         usage_helper = html.split("function updateHistoryRowUsage", 1)[1].split("function toggleHistoryUsed", 1)[0]
         self.assertIn("currentInUseEmail = email", usage_helper)
         self.assertIn("currentInUseEmail = '';", usage_helper)
@@ -145,6 +150,7 @@ const makeElement = (tagName = 'div') => {
   let href = '';
   const attributes = {};
   const closestElements = {};
+  const querySelectorElements = {};
   const element = {
     tagName: String(tagName).toUpperCase(),
     nodeName: String(tagName).toUpperCase(),
@@ -172,7 +178,10 @@ const makeElement = (tagName = 'div') => {
       children.forEach((child) => this.appendChild(child));
     },
     querySelector(selector) {
-      return findDescendants(this, selector)[0] || null;
+      return querySelectorElements[selector] || findDescendants(this, selector)[0] || null;
+    },
+    setQuerySelector(selector, target) {
+      querySelectorElements[selector] = target;
     },
     querySelectorAll(selector) {
       return findDescendants(this, selector);
@@ -188,6 +197,12 @@ const makeElement = (tagName = 'div') => {
       const normalizedValue = String(value);
       attributes[normalizedName] = normalizedValue;
       attributeWrites.push({ name: normalizedName, value: normalizedValue });
+      if (normalizedName.startsWith('data-')) {
+        const datasetName = normalizedName
+          .slice(5)
+          .replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+        this.dataset[datasetName] = normalizedValue;
+      }
       if (/^on/i.test(normalizedName)) {
         handlerWrites.push({ element: this, name: normalizedName, value: normalizedValue });
       }
@@ -277,12 +292,10 @@ vm.runInContext(source, context);
 
 context.__realLoadQueryHistory = vm.runInContext('loadQueryHistory', context);
 context.__onHistoryLoad = () => {};
-context.__onUsageUpdate = () => {};
 vm.runInContext(`
   bindCopyHandlers = () => {};
   loadHistory = () => {};
   loadQueryHistory = (...args) => __onHistoryLoad(...args);
-  updateHistoryRowUsage = (...args) => __onUsageUpdate(...args);
   resolveHistoryProfileId = () => 'profile-1';
 `, context);
 
@@ -372,17 +385,42 @@ const makeQuickSurface = () => {
   const codeResult = makeElement('div');
   const linkResult = makeElement('div');
   const button = makeElement('button');
+  const statusCell = makeElement('td');
+  const platformCell = makeElement('td');
+  const actionCell = makeElement('td');
+  const actionButton = makeElement('button');
   stack.className = 'history-code-stack';
   codeResult.className = 'history-code-result';
   linkResult.className = 'history-link-result';
+  statusCell.textContent = '未使用';
+  statusCell.setAttribute('data-copy', '未使用');
+  platformCell.textContent = 'Existing Platform';
+  platformCell.setAttribute('data-copy', 'Existing Platform');
+  actionCell.className = 'history-action-col';
+  actionCell.appendChild(actionButton);
   stack.appendChild(codeResult);
   stack.appendChild(linkResult);
   row.appendChild(stack);
+  row.appendChild(statusCell);
+  row.appendChild(platformCell);
+  row.appendChild(actionCell);
+  row.setQuerySelector('[data-role="account-status"]', statusCell);
+  row.setQuerySelector('[data-role="account-platform"]', platformCell);
+  row.setQuerySelector('.history-action-col button', actionButton);
   button.dataset.email = 'row@example.com';
   button.dataset.profileId = 'profile-1';
   button.setClosest('.history-code-stack', stack);
   button.setClosest('tr', row);
-  return { row, stack, codeResult, linkResult, button };
+  return {
+    row,
+    stack,
+    codeResult,
+    linkResult,
+    button,
+    statusCell,
+    platformCell,
+    actionButton,
+  };
 };
 
 const runQuickQuery = async (surface, payload) => {
@@ -548,20 +586,38 @@ const runQueryHistory = async (surface, payload) => {
   assertAnchor(topRow.children[4], 'top malicious fields');
 
   let quickHistoryLoads = 0;
-  const usageUpdates = [];
   context.__onHistoryLoad = () => { quickHistoryLoads += 1; };
-  context.__onUsageUpdate = (row, email, used) => {
-    usageUpdates.push({ row, email, used });
-  };
   const quickSurface = makeQuickSurface();
   await runQuickQuery(quickSurface, {
     ok: true,
     code: '',
     verification_url: safeUrl,
+    mark_platform: 'sender@example.com',
   });
   assertAnchor(quickSurface.linkResult, 'quick link-only');
   assert.strictEqual(quickSurface.codeResult.textContent, '仅发现验证链接');
-  assert.strictEqual(usageUpdates.at(-1).used, false);
+  assert.strictEqual(quickSurface.statusCell.textContent, '未使用');
+  assert.strictEqual(quickSurface.actionButton.dataset.used, '0');
+  assert.strictEqual(
+    quickSurface.platformCell.textContent,
+    'Existing Platform, sender@example.com',
+  );
+  assert.strictEqual(
+    quickSurface.platformCell.dataset.copy,
+    'Existing Platform, sender@example.com',
+  );
+
+  await runQuickQuery(quickSurface, {
+    ok: true,
+    code: '',
+    verification_url: safeUrl,
+    mark_platform: 'sender@example.com',
+  });
+  assertAnchor(quickSurface.linkResult, 'quick duplicate platform');
+  assert.strictEqual(
+    quickSurface.platformCell.textContent,
+    'Existing Platform, sender@example.com',
+  );
 
   await runQuickQuery(quickSurface, {
     ok: true,
@@ -594,10 +650,16 @@ const runQueryHistory = async (surface, payload) => {
     ok: true,
     code: '654321',
     verification_url: safeUrl,
+    mark_platform: 'Code Platform',
   });
   assertAnchor(quickCodeAndLink.linkResult, 'quick code+link');
   assert.strictEqual(quickCodeAndLink.codeResult.textContent, '654321');
-  assert.strictEqual(usageUpdates.at(-1).used, true);
+  assert.strictEqual(quickCodeAndLink.statusCell.textContent, '正在使用');
+  assert.strictEqual(quickCodeAndLink.actionButton.dataset.used, '1');
+  assert.strictEqual(
+    quickCodeAndLink.platformCell.textContent,
+    'Existing Platform, Code Platform',
+  );
   assert.strictEqual(quickHistoryLoads, 1);
 
   const queryHistory = makeQueryHistorySurface();
